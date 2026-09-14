@@ -37,6 +37,8 @@ RUN \
     && mkdir -p /var/log/nginx \
     && touch /var/log/nginx/error.log
 
+COPY public /usr/share/grafana/public
+
 # Copy root filesystem
 COPY rootfs /
 
