@@ -3,7 +3,8 @@ name: Grafana
 version: dev
 slug: grafana
 description: The open platform for beautiful analytics and monitoring
-url: https://github.com/hassio-addons/app-grafana
+url: "https://github.com/cr212/app-grafana"
+maintainer: "cr212"
 startup: services
 ingress: true
 ingress_port: 1337
