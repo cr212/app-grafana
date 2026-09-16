@@ -1,36 +1,41 @@
 import { css, cx } from '@emotion/css';
 
-import { GrafanaTheme2 } from '@grafana/data';
+import { AppEvents, type GrafanaTheme2 } from '@grafana/data';
+import { selectors } from '@grafana/e2e-selectors';
 import { t } from '@grafana/i18n';
-import { config } from '@grafana/runtime';
+import { config, getAppEvents } from '@grafana/runtime';
 import {
-  SceneObjectState,
+  type SceneObjectState,
   SceneGridLayout,
   SceneObjectBase,
   SceneGridRow,
   VizPanel,
   sceneGraph,
   sceneUtils,
-  SceneComponentProps,
-  SceneGridItemLike,
+  type SceneComponentProps,
+  type SceneGridItemLike,
   useSceneObjectState,
   SceneGridLayoutDragStartEvent,
-  SceneObject,
+  type SceneObject,
 } from '@grafana/scenes';
-import { Spec as DashboardV2Spec } from '@grafana/schema/dist/esm/schema/dashboard/v2';
+import { type Spec as DashboardV2Spec } from '@grafana/schema/apis/dashboard.grafana.app/v2';
 import { useStyles2 } from '@grafana/ui';
 import { GRID_COLUMN_COUNT } from 'app/core/constants';
 import DashboardEmpty from 'app/features/dashboard/dashgrid/DashboardEmpty/DashboardEmpty';
 
-import {
-  dashboardEditActions,
-  NewObjectAddedToCanvasEvent,
-  ObjectRemovedFromCanvasEvent,
-  ObjectsReorderedOnCanvasEvent,
-} from '../../edit-pane/shared';
+import { addElement } from '../../actions/element/addElement';
+import { removeElement } from '../../actions/element/removeElement';
+import { edit } from '../../actions/utils/edit';
 import { serializeDefaultGridLayout } from '../../serialization/layoutSerializers/DefaultGridLayoutSerializer';
+import {
+  ObjectsReorderedOnCanvasEvent,
+  ObjectRemovedFromCanvasEvent,
+  NewObjectAddedToCanvasEvent,
+} from '../../sidebar/events';
+import { useSoloPanelContext } from '../../solo/SoloPanelContext';
 import { isRepeatCloneOrChildOf } from '../../utils/clone';
-import { dashboardSceneGraph } from '../../utils/dashboardSceneGraph';
+import { dashboardSceneGraph, type PanelIdGenerator } from '../../utils/dashboardSceneGraph';
+import { getTestIdForLayout } from '../../utils/test-utils';
 import {
   forceRenderChildren,
   getPanelIdForVizPanel,
@@ -42,15 +47,14 @@ import {
   getLayoutOrchestratorFor,
   getDashboardSceneFor,
 } from '../../utils/utils';
-import { useSoloPanelContext } from '../SoloPanelContext';
 import { AutoGridItem } from '../layout-auto-grid/AutoGridItem';
 import { CanvasGridAddActions } from '../layouts-shared/CanvasGridAddActions';
+import { buildGroupEdit, canGroupSelection } from '../layouts-shared/groupLayout';
 import { clearClipboard, getDashboardGridItemFromClipboard } from '../layouts-shared/paste';
 import { dashboardCanvasAddButtonHoverStyles } from '../layouts-shared/styles';
-import { getIsLazy } from '../layouts-shared/utils';
-import { DashboardLayoutGrid } from '../types/DashboardLayoutGrid';
-import { DashboardLayoutManager } from '../types/DashboardLayoutManager';
-import { LayoutRegistryItem } from '../types/LayoutRegistryItem';
+import { type DashboardLayoutGrid } from '../types/DashboardLayoutGrid';
+import { type DashboardLayoutManager, type GroupTarget, type GroupingResult } from '../types/DashboardLayoutManager';
+import { type LayoutRegistryItem } from '../types/LayoutRegistryItem';
 
 import { DashboardGridItem } from './DashboardGridItem';
 import { RowRepeaterBehavior } from './RowRepeaterBehavior';
@@ -82,8 +86,8 @@ export class DefaultGridLayoutManager
     icon: 'window-grid',
   };
 
-  public serialize(): DashboardV2Spec['layout'] {
-    return serializeDefaultGridLayout(this);
+  public serialize(isSnapshot?: boolean): DashboardV2Spec['layout'] {
+    return serializeDefaultGridLayout(this, isSnapshot);
   }
 
   public readonly descriptor = DefaultGridLayoutManager.descriptor;
@@ -92,6 +96,10 @@ export class DefaultGridLayoutManager
     super(state);
 
     this.addActivationHandler(() => this._activationHandler());
+  }
+
+  public getAllGridTypes(): string[] {
+    return [DefaultGridLayoutManager.descriptor.id];
   }
 
   public mergeGrid(other: DashboardLayoutGrid) {
@@ -158,7 +166,7 @@ export class DefaultGridLayoutManager
         key: getGridItemKeyForPanelId(panelId),
       });
 
-      dashboardEditActions.addElement({
+      addElement({
         addedObject: vizPanel,
         source: this,
         perform: () => {
@@ -186,10 +194,20 @@ export class DefaultGridLayoutManager
 
   public pastePanel() {
     const emptySpace = findSpaceForNewPanel(this.state.grid);
-    const newGridItem = getDashboardGridItemFromClipboard(getDashboardSceneFor(this), emptySpace);
+    let newGridItem;
+
+    try {
+      newGridItem = getDashboardGridItemFromClipboard(getDashboardSceneFor(this), emptySpace);
+    } catch (error) {
+      getAppEvents().publish({
+        type: AppEvents.alertError.name,
+        payload: error instanceof Error ? [error.message, String(error.cause)] : [String(error)],
+      });
+      return;
+    }
 
     if (config.featureToggles.dashboardNewLayouts) {
-      dashboardEditActions.edit({
+      edit({
         description: t('dashboard.edit-actions.paste-panel', 'Paste panel'),
         addedObject: newGridItem.state.body,
         source: this,
@@ -238,7 +256,7 @@ export class DefaultGridLayoutManager
       return;
     }
 
-    dashboardEditActions.removeElement({
+    removeElement({
       removedObject: gridItem.state.body,
       source: this,
       perform: () => layout.setState({ children: layout.state.children.filter((child) => child !== gridItem) }),
@@ -306,7 +324,7 @@ export class DefaultGridLayoutManager
     }
 
     const parent = gridItem.parent instanceof SceneGridRow ? gridItem.parent : grid;
-    dashboardEditActions.edit({
+    edit({
       description: t('dashboard.edit-actions.duplicate-panel', 'Duplicate panel'),
       addedObject: newGridItem.state.body,
       source: this,
@@ -324,25 +342,26 @@ export class DefaultGridLayoutManager
     });
   }
 
-  public duplicate(): DashboardLayoutManager {
+  // panelIdGenerator is a shared counter to ensure unique panel IDs across siblings.
+  public duplicate(panelIdGenerator?: PanelIdGenerator): DashboardLayoutManager {
     const children = this.state.grid.state.children;
     const hasGridItem = children.find((child) => child instanceof DashboardGridItem);
     const clonedChildren: SceneGridItemLike[] = [];
 
     if (children.length) {
-      let panelId = hasGridItem ? dashboardSceneGraph.getNextPanelId(hasGridItem.state.body) : 1;
+      const nextId =
+        panelIdGenerator ?? dashboardSceneGraph.getPanelIdGenerator(hasGridItem ? hasGridItem.state.body : this);
 
       children.forEach((child) => {
         if (child instanceof DashboardGridItem) {
           const clone = child.clone({
             key: undefined,
             body: child.state.body.clone({
-              key: getVizPanelKeyForPanelId(panelId),
+              key: getVizPanelKeyForPanelId(nextId()),
             }),
           });
 
           clonedChildren.push(clone);
-          panelId++;
         } else {
           clonedChildren.push(child.clone({ key: undefined }));
         }
@@ -419,7 +438,7 @@ export class DefaultGridLayoutManager
 
     if (config.featureToggles.dashboardNewLayouts) {
       // We do this in a timeout to wait a bit with enabling dragging as dragging enables grid animations
-      // if we show the edit pane without animations it opens much faster and feels more responsive
+      // if we show the sidebar without animations it opens much faster and feels more responsive
       setTimeout(updateResizeAndDragging, 10);
       return;
     }
@@ -471,6 +490,20 @@ export class DefaultGridLayoutManager
     }
 
     return children;
+  }
+
+  public canGroupSelectionInto(items: SceneObject[], target: GroupTarget): GroupingResult {
+    return canGroupSelection(items, target);
+  }
+
+  public groupSelectionInto(items: SceneObject[], target: GroupTarget): void {
+    const groupEdit = buildGroupEdit(items, target);
+
+    if (!groupEdit) {
+      return;
+    }
+
+    edit({ ...groupEdit, source: getDashboardSceneFor(this) });
   }
 
   public cloneLayout(ancestorKey: string, isSource: boolean): DashboardLayoutManager {
@@ -565,11 +598,20 @@ export class DefaultGridLayoutManager
 
   public static createFromLayout(currentLayout: DashboardLayoutManager): DefaultGridLayoutManager {
     const panels = currentLayout.getVizPanels();
-    const isLazy = getIsLazy(getDashboardSceneFor(currentLayout).state.preload)!;
-    return DefaultGridLayoutManager.fromVizPanels(panels, isLazy);
+    return DefaultGridLayoutManager.fromVizPanels(panels);
   }
 
-  public static fromVizPanels(panels: VizPanel[] = [], isLazy?: boolean | undefined): DefaultGridLayoutManager {
+  public static createEmpty(): DefaultGridLayoutManager {
+    return new DefaultGridLayoutManager({
+      grid: new SceneGridLayout({
+        children: [],
+        isDraggable: true,
+        isResizable: true,
+      }),
+    });
+  }
+
+  public static fromVizPanels(panels: VizPanel[] = []): DefaultGridLayoutManager {
     const children: DashboardGridItem[] = [];
     const panelHeight = 10;
     const panelWidth = GRID_COLUMN_COUNT / 3;
@@ -607,7 +649,6 @@ export class DefaultGridLayoutManager
         children: children,
         isDraggable: true,
         isResizable: true,
-        isLazy,
       }),
     });
   }
@@ -615,8 +656,7 @@ export class DefaultGridLayoutManager
   public static fromGridItems(
     gridItems: SceneGridItemLike[],
     isDraggable?: boolean,
-    isResizable?: boolean,
-    isLazy?: boolean | undefined
+    isResizable?: boolean
   ): DefaultGridLayoutManager {
     const children = gridItems.reduce<SceneGridItemLike[]>((acc, gridItem) => {
       gridItem.clearParent();
@@ -630,7 +670,6 @@ export class DefaultGridLayoutManager
         children,
         isDraggable,
         isResizable,
-        isLazy,
       }),
     });
   }
@@ -657,8 +696,18 @@ function DefaultGridLayoutManagerRenderer({ model }: SceneComponentProps<Default
   }
 
   return (
-    <div className={cx(styles.container, isEditing && styles.containerEditing)}>
-      {model.state.grid.Component && <model.state.grid.Component model={model.state.grid} />}
+    <div
+      className={cx(styles.container, isEditing && styles.containerEditing)}
+      data-testid={selectors.components.LayoutContainer(getTestIdForLayout(model))}
+    >
+      {model.state.grid.Component && (
+        // #123563: Workaround, needs proper fixing downstream
+        // Force-remount when toggling between empty and populated. react-grid-layout caches its
+        // computed container height in internal state; without a fresh mount it stays sized to
+        // the last panel and overflows on top of the Add panel button below. Needs further investigation
+        // as part of #123563.
+        <model.state.grid.Component model={model.state.grid} key={children.length === 0 ? 'empty' : 'populated'} />
+      )}
       {showCanvasActions && (
         <div className={styles.actionsWrapper}>
           <CanvasGridAddActions layoutManager={model} />
@@ -691,11 +740,15 @@ function getStyles(theme: GrafanaTheme2) {
       flexDirection: 'column',
     }),
     containerEditing: css({
+      '&:hover .dashboard-canvas-controls': {
+        opacity: 1,
+      },
+
       // In editing the add actions should live at the bottom of the grid so we have to
       // disable flex grow on the SceneGridLayouts first div
       '> div:first-child': {
         flexGrow: `0 !important`,
-        minHeight: '250px',
+        minHeight: 1,
       },
       ...dashboardCanvasAddButtonHoverStyles,
     }),

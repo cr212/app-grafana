@@ -1,12 +1,10 @@
-import { FormEvent, useCallback } from 'react';
+import { isObject } from 'lodash';
+import { type FormEvent, useCallback, useState } from 'react';
 
-import { t } from '@grafana/i18n';
-import { CustomVariable, SceneVariable } from '@grafana/scenes';
+import { type CustomVariableModel, shallowCompare } from '@grafana/data';
+import { type CustomVariable } from '@grafana/scenes';
 
-import { OptionsPaneItemDescriptor } from '../../../../../dashboard/components/PanelEditor/OptionsPaneItemDescriptor';
 import { CustomVariableForm } from '../../components/CustomVariableForm';
-
-import { PaneItem } from './PaneItem';
 
 interface CustomVariableEditorProps {
   variable: CustomVariable;
@@ -14,7 +12,26 @@ interface CustomVariableEditorProps {
 }
 
 export function CustomVariableEditor({ variable, onRunQuery }: CustomVariableEditorProps) {
-  const { query, isMulti, allValue, includeAll, allowCustomValue } = variable.useState();
+  const { query, valuesFormat, isMulti, allValue, includeAll, allowCustomValue } = variable.useState();
+  const [queryValidationError, setQueryValidationError] = useState<Error>();
+
+  const [prevQuery, setPrevQuery] = useState('');
+  const onValuesFormatChange = useCallback(
+    (format: CustomVariableModel['valuesFormat']) => {
+      variable.setState({ query: prevQuery });
+      variable.setState({ value: isMulti ? [] : undefined });
+      variable.setState({ valuesFormat: format });
+      variable.setState({ allowCustomValue: false });
+      variable.setState({ allValue: undefined });
+      onRunQuery();
+
+      setQueryValidationError(undefined);
+      if (query !== prevQuery) {
+        setPrevQuery(query);
+      }
+    },
+    [isMulti, onRunQuery, prevQuery, query, variable]
+  );
 
   const onMultiChange = useCallback(
     (event: FormEvent<HTMLInputElement>) => {
@@ -32,10 +49,20 @@ export function CustomVariableEditor({ variable, onRunQuery }: CustomVariableEdi
 
   const onQueryChange = useCallback(
     (event: FormEvent<HTMLTextAreaElement>) => {
+      setPrevQuery('');
+
+      if (valuesFormat === 'json') {
+        const validationError = validateJsonQuery(event.currentTarget.value.trim());
+        setQueryValidationError(validationError);
+        if (validationError) {
+          return;
+        }
+      }
+
       variable.setState({ query: event.currentTarget.value });
       onRunQuery();
     },
-    [variable, onRunQuery]
+    [valuesFormat, variable, onRunQuery]
   );
 
   const onAllValueChange = useCallback(
@@ -55,29 +82,61 @@ export function CustomVariableEditor({ variable, onRunQuery }: CustomVariableEdi
   return (
     <CustomVariableForm
       query={query ?? ''}
+      valuesFormat={valuesFormat ?? 'csv'}
       multi={!!isMulti}
       allValue={allValue ?? ''}
       includeAll={!!includeAll}
       allowCustomValue={allowCustomValue}
+      queryValidationError={queryValidationError}
+      onQueryChange={onQueryChange}
       onMultiChange={onMultiChange}
       onIncludeAllChange={onIncludeAllChange}
-      onQueryChange={onQueryChange}
       onAllValueChange={onAllValueChange}
       onAllowCustomValueChange={onAllowCustomValueChange}
+      onValuesFormatChange={onValuesFormatChange}
     />
   );
 }
 
-export function getCustomVariableOptions(variable: SceneVariable): OptionsPaneItemDescriptor[] {
-  if (!(variable instanceof CustomVariable)) {
-    return [];
+const validateJsonQuery = (query: string): Error | undefined => {
+  if (!query) {
+    return;
   }
 
-  return [
-    new OptionsPaneItemDescriptor({
-      title: t('dashboard.edit-pane.variable.custom-options.values', 'Values separated by comma'),
-      id: 'custom-variable-values',
-      render: ({ props }) => <PaneItem id={props.id} variable={variable} />,
-    }),
-  ];
-}
+  try {
+    const options = JSON.parse(query);
+
+    if (!Array.isArray(options)) {
+      throw new Error('Enter a valid JSON array of objects');
+    }
+
+    if (!options.length) {
+      return;
+    }
+
+    let errorIndex = options.findIndex((item) => !isObject(item));
+    if (errorIndex !== -1) {
+      throw new Error(`All items must be objects. The item at index ${errorIndex} is not an object.`);
+    }
+
+    const keys = Object.keys(options[0]);
+    if (!keys.includes('value')) {
+      throw new Error('Each object in the array must include at least a "value" property');
+    }
+    if (keys.includes('')) {
+      throw new Error('Object property names cannot be empty strings');
+    }
+
+    errorIndex = options.findIndex((o) => !shallowCompare(keys, Object.keys(o)));
+    if (errorIndex !== -1) {
+      throw new Error(
+        `All objects must have the same set of properties. The object at index ${errorIndex} does not match the expected properties`
+      );
+    }
+
+    return;
+  } catch (error) {
+    // eslint-disable-next-line @typescript-eslint/consistent-type-assertions
+    return error as Error;
+  }
+};

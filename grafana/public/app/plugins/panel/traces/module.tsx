@@ -5,7 +5,7 @@ import { migrateToAdhocFilters } from '../../../features/explore/TraceView/useSe
 
 import { FiltersEditor } from './FiltersEditor';
 import { TracesPanel } from './TracesPanel';
-import { TracesSuggestionsSupplier } from './suggestions';
+import { tracesSuggestionsSupplier } from './suggestions';
 
 export const plugin = new PanelPlugin(TracesPanel)
   .setMigrationHandler((panel) => {
@@ -44,4 +44,4 @@ export const plugin = new PanelPlugin(TracesPanel)
         category,
       });
   })
-  .setSuggestionsSupplier(new TracesSuggestionsSupplier());
+  .setSuggestionsSupplier(tracesSuggestionsSupplier);

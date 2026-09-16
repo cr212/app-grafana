@@ -62,6 +62,12 @@ export async function initEchoSrv() {
   }
 
   try {
+    await initPostHogBackend();
+  } catch (error) {
+    console.error('Error initializing EchoSrv PostHog backend', error);
+  }
+
+  try {
     await initConsoleBackend();
   } catch (error) {
     console.error('Error initializing EchoSrv Console backend', error);
@@ -107,7 +113,6 @@ async function initFaroBackend() {
       performanceInstrumentalizationEnabled: config.grafanaJavascriptAgent.performanceInstrumentalizationEnabled,
       cspInstrumentalizationEnabled: config.grafanaJavascriptAgent.cspInstrumentalizationEnabled,
       tracingInstrumentalizationEnabled: config.grafanaJavascriptAgent.tracingInstrumentalizationEnabled,
-      webVitalsAttribution: config.grafanaJavascriptAgent.webVitalsAttribution,
       internalLoggerLevel: config.grafanaJavascriptAgent.internalLoggerLevel,
       botFilterEnabled: config.grafanaJavascriptAgent.botFilterEnabled,
     })
@@ -146,7 +151,11 @@ async function initRudderstackBackend() {
     return;
   }
 
-  const modulePromise = config.featureToggles.rudderstackUpgrade
+  // Prefer the v3 SDK when its URL is set.
+  // Fall back to the legacy SDK otherwise.
+  const hasNewSdkUrl = Boolean(config.rudderstackV3SdkUrl);
+  const sdkUrl = hasNewSdkUrl ? config.rudderstackV3SdkUrl : config.rudderstackSdkUrl;
+  const modulePromise = hasNewSdkUrl
     ? import('./backends/analytics/RudderstackV3Backend')
     : import('./backends/analytics/RudderstackBackend');
 
@@ -156,7 +165,7 @@ async function initRudderstackBackend() {
       writeKey: config.rudderstackWriteKey,
       dataPlaneUrl: config.rudderstackDataPlaneUrl,
       user: contextSrv.user,
-      sdkUrl: config.rudderstackSdkUrl,
+      sdkUrl,
       configUrl: config.rudderstackConfigUrl,
       integrationsUrl: config.rudderstackIntegrationsUrl,
       buildInfo: config.buildInfo,
@@ -175,6 +184,21 @@ async function initAzureAppInsightsBackend() {
       connectionString: config.applicationInsightsConnectionString,
       endpointUrl: config.applicationInsightsEndpointUrl,
       autoRouteTracking: config.applicationInsightsAutoRouteTracking,
+    })
+  );
+}
+
+async function initPostHogBackend() {
+  if (!config.postHogToken) {
+    return;
+  }
+
+  const { PostHogBackend } = await import('./backends/analytics/PostHogBackend');
+  registerEchoBackend(
+    new PostHogBackend({
+      postHogToken: config.postHogToken,
+      postHogHost: config.postHogHost,
+      user: contextSrv.user,
     })
   );
 }

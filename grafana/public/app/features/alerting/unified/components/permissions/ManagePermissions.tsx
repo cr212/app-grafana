@@ -1,4 +1,4 @@
-import { ComponentProps, useState } from 'react';
+import { type ComponentProps, type JSX, useState } from 'react';
 
 import { Trans, t } from '@grafana/i18n';
 import { Button, Drawer } from '@grafana/ui';

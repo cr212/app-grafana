@@ -7,11 +7,12 @@ import {
   Field,
 } from '@grafana/data';
 
-import { getGeometryField, LocationFieldMatchers } from './location';
+import { getGeometryField, type LocationFieldMatchers } from './location';
 
 export interface FrameVectorSourceOptions {
-  groupBy?: string;
+  groupBy?: string; // Campo per il raggruppamento
 }
+
 
 // Helper function to create properly typed Features
 function createFeature<T extends Geometry>(properties: {
@@ -24,9 +25,8 @@ function createFeature<T extends Geometry>(properties: {
 }
 
 export class FrameVectorSource<T extends Geometry = Geometry> extends VectorSource<Feature<T>> {
-  constructor(
-    public location: LocationFieldMatchers,
-    options: FrameVectorSourceOptions = {}
+  constructor(public location: LocationFieldMatchers,
+        options: FrameVectorSourceOptions = {}
   ) {
     super({});
   }

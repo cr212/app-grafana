@@ -1,7 +1,8 @@
 import { render, screen, testWithFeatureToggles } from 'test/test-utils';
 
 import { setBackendSrv } from '@grafana/runtime';
-import { setupMockServer } from '@grafana/test-utils/server';
+import { getCustomSearchHandler } from '@grafana/test-utils/handlers';
+import server, { setupMockServer } from '@grafana/test-utils/server';
 import { getFolderFixtures } from '@grafana/test-utils/unstable';
 import { backendSrv } from 'app/core/services/backend_srv';
 import impressionSrv from 'app/core/services/impression_srv';
@@ -9,7 +10,7 @@ import impressionSrv from 'app/core/services/impression_srv';
 import { getPanelProps } from '../test-utils';
 
 import { DashList } from './DashList';
-import { Options } from './panelcfg.gen';
+import { type Options } from './panelcfg.gen';
 
 const [_, { folderA, folderA_dashbdD, dashbdE }] = getFolderFixtures();
 
@@ -40,7 +41,7 @@ const fixtures: Array<
     Parameters<typeof testWithFeatureToggles>[0],
   ]
 > = [
-  ['DashList - app platform APIs enabled', { enable: ['unifiedStorageSearchUI', 'starsFromAPIServer'] }],
+  ['DashList - app platform APIs enabled', { enable: ['starsFromAPIServer'] }],
   ['DashList - app platform APIs disabled', {}],
 ];
 describe.each(fixtures)('%s', (_title, featureTogglesSetup) => {
@@ -56,7 +57,7 @@ describe.each(fixtures)('%s', (_title, featureTogglesSetup) => {
     });
     render(<DashList {...props} />);
 
-    const headings = (await screen.findAllByRole('heading')).map((heading) => heading.textContent);
+    const headings = (await screen.findAllByTestId('dashlist-header')).map((heading) => heading.textContent);
     expect(headings).toEqual(['Starred dashboards', 'Recently viewed dashboards', 'Search']);
   });
 
@@ -129,5 +130,35 @@ describe.each(fixtures)('%s', (_title, featureTogglesSetup) => {
     render(<DashList {...props} />);
 
     expect(await screen.findByText(dashbdE.item.title)).toBeInTheDocument();
+  });
+
+  it('shows the dashboard description in a tooltip when hovering the description indicator', async () => {
+    server.use(
+      getCustomSearchHandler([
+        {
+          name: 'dash-uid',
+          title: 'Dashboard with description',
+          resource: 'dashboards',
+          description: 'Uptime overview',
+        },
+      ])
+    );
+    const props = getPanelProps({ ...defaultOptions, showSearch: true });
+    const { user } = render(<DashList {...props} />);
+
+    await user.hover(await screen.findByLabelText('Description'));
+
+    expect(await screen.findByRole('tooltip')).toHaveTextContent('Uptime overview');
+  });
+
+  it('does not render a description tooltip indicator when a dashboard has no description', async () => {
+    server.use(
+      getCustomSearchHandler([{ name: 'dash-uid', title: 'Dashboard without description', resource: 'dashboards' }])
+    );
+    const props = getPanelProps({ ...defaultOptions, showSearch: true });
+    render(<DashList {...props} />);
+
+    expect(await screen.findByText('Dashboard without description')).toBeInTheDocument();
+    expect(screen.queryByLabelText('Description')).not.toBeInTheDocument();
   });
 });

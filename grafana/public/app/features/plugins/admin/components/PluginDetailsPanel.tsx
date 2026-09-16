@@ -1,10 +1,10 @@
 import { css } from '@emotion/css';
 import { useState } from 'react';
 
-import { GrafanaTheme2 } from '@grafana/data';
+import { type GrafanaTheme2 } from '@grafana/data';
 import { t, Trans } from '@grafana/i18n';
-import { reportInteraction } from '@grafana/runtime';
-import { PageInfoItem } from '@grafana/runtime/internal';
+import { config } from '@grafana/runtime';
+import { type PageInfoItem } from '@grafana/runtime/internal';
 import {
   Stack,
   Text,
@@ -20,7 +20,9 @@ import {
 } from '@grafana/ui';
 import { formatDate } from 'app/core/internationalization/dates';
 
-import { CatalogPlugin } from '../types';
+import { type CatalogPlugin } from '../types';
+
+import { PluginInsights } from './PluginInsights';
 
 type Props = { pluginExtentionsInfo: PageInfoItem[]; plugin: CatalogPlugin; width?: string };
 
@@ -51,9 +53,8 @@ export function PluginDetailsPanel(props: Props): React.ReactElement | null {
 
   const styles = useStyles2(getStyles);
 
-  const onClickReportConcern = (pluginId: string) => {
+  const onClickReportConcern = () => {
     setReportAbuseModalOpen(true);
-    reportInteraction('plugin_detail_report_concern', { plugin_id: pluginId });
   };
 
   function createTestId(text: string) {
@@ -69,6 +70,11 @@ export function PluginDetailsPanel(props: Props): React.ReactElement | null {
   return (
     <>
       <Stack direction="column" gap={3} shrink={0} grow={0} width={width} data-testid="plugin-details-panel">
+        {config.featureToggles.pluginInsights && plugin.insights && plugin.insights?.insights?.length > 0 && (
+          <Box borderRadius="lg" padding={2} borderColor="medium" borderStyle="solid">
+            <PluginInsights pluginInsights={plugin.insights} />
+          </Box>
+        )}
         <Box borderRadius="lg" padding={2} borderColor="medium" borderStyle="solid">
           <Stack direction="column" gap={2}>
             {pluginExtentionsInfo.map((infoItem, index) => {
@@ -232,7 +238,7 @@ export function PluginDetailsPanel(props: Props): React.ReactElement | null {
               }
             >
               <Stack direction="column">
-                <Button variant="secondary" fill="solid" icon="bell" onClick={() => onClickReportConcern(plugin.id)}>
+                <Button variant="secondary" fill="solid" icon="bell" onClick={onClickReportConcern}>
                   <Trans i18nKey="plugins.details.labels.contactGrafanaLabs">Contact Grafana Labs</Trans>
                 </Button>
               </Stack>
@@ -276,6 +282,6 @@ export function PluginDetailsPanel(props: Props): React.ReactElement | null {
   );
 }
 
-export const getStyles = (theme: GrafanaTheme2) => {
+const getStyles = (theme: GrafanaTheme2) => {
   return { pluginVersionDetails: css({ wordBreak: 'break-word' }) };
 };

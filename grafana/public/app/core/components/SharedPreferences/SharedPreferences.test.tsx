@@ -1,22 +1,32 @@
-import { comboboxTestSetup } from 'test/helpers/comboboxTestSetup';
 import { getSelectParent, selectOptionInTest } from 'test/helpers/selectOptionInTest';
 import { render, screen, userEvent, waitFor, within } from 'test/test-utils';
 
 import { setBackendSrv } from '@grafana/runtime';
+import { mockComboboxRect } from '@grafana/test-utils';
 import { setupMockServer } from '@grafana/test-utils/server';
 import { getFolderFixtures } from '@grafana/test-utils/unstable';
 import { backendSrv } from 'app/core/services/backend_srv';
 import { captureRequests } from 'app/features/alerting/unified/mocks/server/events';
 
-import SharedPreferences from './SharedPreferences';
+import { SharedPreferences } from './SharedPreferences';
+import { homeDashboardChanged } from './analytics/main';
+
+jest.mock('./analytics/main', () => ({
+  saveButtonClicked: jest.fn(),
+  themeChanged: jest.fn(),
+  languageChanged: jest.fn(),
+  homeDashboardChanged: jest.fn(),
+}));
 
 setBackendSrv(backendSrv);
 setupMockServer();
 
 const getPrefsUpdateRequest = async (requests: Request[]) => {
-  const prefsUpdate = requests.find((r) => r.url.match('/preferences') && r.method === 'PUT');
+  const prefsUpdate = requests.find(
+    (r) => r.url.match('/apis/preferences.grafana.app/v1/namespaces/default/preferences/user') && r.method === 'PATCH'
+  );
 
-  return prefsUpdate!.clone().json();
+  return prefsUpdate?.clone().json();
 };
 
 const [_, { dashbdD, dashbdE }] = getFolderFixtures();
@@ -46,7 +56,7 @@ beforeAll(() => {
       reload: mockReload,
     },
   });
-  comboboxTestSetup();
+  mockComboboxRect();
 });
 
 afterAll(() => {
@@ -54,6 +64,11 @@ afterAll(() => {
     writable: true,
     value: original,
   });
+});
+
+beforeEach(() => {
+  mockReload.mockClear();
+  jest.mocked(homeDashboardChanged).mockClear();
 });
 
 describe('SharedPreferences', () => {
@@ -117,7 +132,7 @@ describe('SharedPreferences', () => {
       await screen.findByRole('combobox', { name: /home dashboard/i }),
       new RegExp(dashboardToSelect.title)
     );
-    await selectOptionInTest(screen.getByLabelText('Timezone'), 'Australia/Sydney');
+    await selectOptionInTest(screen.getByLabelText('Timezone'), 'Sydney');
     await selectComboboxOptionInTest(await screen.findByRole('combobox', { name: 'Week start' }), 'Saturday');
     await selectComboboxOptionInTest(await screen.findByRole('combobox', { name: /language/i }), 'Français');
 
@@ -127,14 +142,19 @@ describe('SharedPreferences', () => {
     const newPreferences = await getPrefsUpdateRequest(requests);
 
     expect(newPreferences).toEqual({
-      timezone: 'Australia/Sydney',
-      weekStart: 'saturday',
-      theme: 'dark',
-      homeDashboardUID: dashboardToSelect.uid,
-      queryHistory: {
-        homeTab: '',
+      spec: {
+        timezone: 'Australia/Sydney',
+        weekStart: 'saturday',
+        theme: 'dark',
+        homeDashboardUID: dashboardToSelect.uid,
+        queryHistory: {
+          homeTab: '',
+        },
+        language: 'fr-FR',
+        navbar: {
+          bookmarkUrls: [],
+        },
       },
-      language: 'fr-FR',
     });
   });
 
@@ -158,14 +178,19 @@ describe('SharedPreferences', () => {
     const requests = await capture;
     const newPreferences = await getPrefsUpdateRequest(requests);
     expect(newPreferences).toEqual({
-      timezone: '',
-      weekStart: '',
-      theme: '',
-      homeDashboardUID: '',
-      queryHistory: {
-        homeTab: '',
+      spec: {
+        timezone: '',
+        weekStart: '',
+        theme: '',
+        homeDashboardUID: '',
+        queryHistory: {
+          homeTab: '',
+        },
+        language: '',
+        navbar: {
+          bookmarkUrls: [],
+        },
       },
-      language: '',
     });
   });
 
@@ -173,5 +198,32 @@ describe('SharedPreferences', () => {
     const { user } = await setup();
     await user.click(screen.getByText('Save preferences'));
     expect(mockReload).toHaveBeenCalled();
+  });
+
+  it('fires home_dashboard_changed with action set when a new home dashboard is saved', async () => {
+    const { user } = await setup();
+
+    await selectComboboxOptionInTest(
+      await screen.findByRole('combobox', { name: /home dashboard/i }),
+      new RegExp(dashbdE.item.title)
+    );
+    await user.click(screen.getByText('Save preferences'));
+
+    await waitFor(() => {
+      expect(jest.mocked(homeDashboardChanged)).toHaveBeenCalledWith({
+        preferenceType: 'user',
+        action: 'set',
+      });
+    });
+  });
+
+  it('does not fire home_dashboard_changed when the home dashboard is unchanged', async () => {
+    const { user } = await setup();
+
+    await selectOptionInTest(screen.getByLabelText('Timezone'), 'Sydney');
+    await user.click(screen.getByText('Save preferences'));
+
+    await waitFor(() => expect(mockReload).toHaveBeenCalled());
+    expect(jest.mocked(homeDashboardChanged)).not.toHaveBeenCalled();
   });
 });

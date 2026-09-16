@@ -1,7 +1,7 @@
 import React from 'react';
 
 import { t } from '@grafana/i18n';
-import { ToolbarButton } from '@grafana/ui';
+import { type IconName, ToolbarButton } from '@grafana/ui';
 
 interface ToolbarItemButtonProps {
   isOpen: boolean;
@@ -10,15 +10,15 @@ interface ToolbarItemButtonProps {
   pluginId?: string;
 }
 
-function getPluginIcon(pluginId?: string): string {
+function getPluginIcon(pluginId?: string): IconName {
   switch (pluginId) {
     // The docs plugin ID is transitioning from grafana-grafanadocsplugin-app to grafana-pathfinder-app.
     // Support both until that migration is complete.
     case 'grafana-grafanadocsplugin-app':
     case 'grafana-pathfinder-app':
       return 'book';
-    case 'grafana-investigations-app':
-      return 'eye';
+    case 'grafana-grotfood-app':
+      return 'gf-grotfood';
     default:
       return 'ai-sparkle';
   }
@@ -46,8 +46,10 @@ function ExtensionToolbarItemButtonComponent(
       iconOnly
       data-testid={`extension-toolbar-button-${isOpen ? 'close' : 'open'}`}
       variant={isOpen ? 'active' : 'default'}
+      aria-expanded={isOpen}
       onClick={onClick}
       tooltip={tooltip}
+      aria-pressed={isOpen}
     />
   );
 }

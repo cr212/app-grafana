@@ -1,20 +1,28 @@
 import { css } from '@emotion/css';
 
-import { GrafanaTheme2, urlUtil } from '@grafana/data';
+import { type GrafanaTheme2, urlUtil } from '@grafana/data';
 import { useStyles2 } from '@grafana/ui';
 import { useQueryParams } from 'app/core/hooks/useQueryParams';
 
 import { ScopesDashboardsTreeFolderItem } from './ScopesDashboardsTreeFolderItem';
 import { ScopesNavigationTreeLink } from './ScopesNavigationTreeLink';
-import { OnFolderUpdate, SuggestedNavigationsFoldersMap } from './types';
+import { type OnFolderUpdate, type SuggestedNavigationsFoldersMap } from './types';
 
 export interface ScopesDashboardsTreeProps {
+  subScope?: string;
   folders: SuggestedNavigationsFoldersMap;
   folderPath: string[];
+  subScopePath?: string[];
   onFolderUpdate: OnFolderUpdate;
 }
 
-export function ScopesDashboardsTree({ folders, folderPath, onFolderUpdate }: ScopesDashboardsTreeProps) {
+export function ScopesDashboardsTree({
+  subScopePath,
+  subScope,
+  folders,
+  folderPath,
+  onFolderUpdate,
+}: ScopesDashboardsTreeProps) {
   const [queryParams] = useQueryParams();
   const styles = useStyles2(getStyles);
 
@@ -44,6 +52,9 @@ export function ScopesDashboardsTree({ folders, folderPath, onFolderUpdate }: Sc
       {regularFolders.map(([subFolderId, subFolder]) => (
         <ScopesDashboardsTreeFolderItem
           key={subFolderId}
+          // Inherit parent subScope so dashboards under group folders still write nav_scope_path.
+          subScope={subScope}
+          subScopePath={subScopePath}
           folder={subFolder}
           folders={folder.folders}
           folderPath={[...folderPath, subFolderId]}
@@ -52,6 +63,8 @@ export function ScopesDashboardsTree({ folders, folderPath, onFolderUpdate }: Sc
       ))}
       {regularNavigations.map((navigation) => (
         <ScopesNavigationTreeLink
+          subScope={subScope}
+          subScopePath={subScopePath}
           key={navigation.id + navigation.title}
           to={urlUtil.renderUrl(navigation.url, queryParams)}
           title={navigation.title}
@@ -66,6 +79,7 @@ export function ScopesDashboardsTree({ folders, folderPath, onFolderUpdate }: Sc
       {subScopeFolders.map(([subFolderId, subFolder]) => (
         <ScopesDashboardsTreeFolderItem
           key={subFolderId}
+          subScopePath={[...(subScopePath ?? []), subFolder.subScopeName ?? '']}
           folder={subFolder}
           folders={folder.folders}
           folderPath={[...folderPath, subFolderId]}

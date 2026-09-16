@@ -1,17 +1,28 @@
+import { useBooleanFlagValue } from '@openfeature/react-sdk';
 import { useMemo, useRef } from 'react';
 
-import { intervalToAbbreviatedDurationString, TraceKeyValuePair } from '@grafana/data';
+import { intervalToAbbreviatedDurationString, type TraceKeyValuePair } from '@grafana/data';
+import { selectors } from '@grafana/e2e-selectors';
 import { t, Trans } from '@grafana/i18n';
 import { Badge, Box, Card, InteractiveTable, Spinner, Stack, Text } from '@grafana/ui';
-import { Job, Repository } from 'app/api/clients/provisioning/v0alpha1';
+import { getErrorMessage } from 'app/api/clients/provisioning/utils/httpUtils';
+import { type Job, type Repository } from 'app/api/clients/provisioning/v0alpha1';
 import KeyValuesTable from 'app/features/explore/TraceView/components/TraceTimelineViewer/SpanDetail/KeyValuesTable';
 
+import {
+  AnnoKeyProvisioningAuthor,
+  AnnoKeyProvisioningAuthorEmail,
+  AnnoKeyProvisioningAuthorId,
+  AnnoKeyProvisioningAuthorOrigin,
+} from '../../apiserver/types';
 import { ProvisioningAlert } from '../Shared/ProvisioningAlert';
+import { type RepoType } from '../Wizard/types';
 import { useRepositoryAllJobs } from '../hooks/useRepositoryAllJobs';
-import { getErrorMessage } from '../utils/httpUtils';
 import { getStatusColor } from '../utils/repositoryStatus';
+import { getRepositoryTypeConfig } from '../utils/repositoryTypes';
 import { formatTimestamp } from '../utils/time';
 
+import { JobAlerts } from './JobAlerts';
 import { JobSummary } from './JobSummary';
 
 interface Props {
@@ -39,7 +50,7 @@ function formatJobDuration(job: Job): string | null {
   return intervalToAbbreviatedDurationString(interval, true);
 }
 
-const getJobColumns = () => [
+const getJobColumns = (showAuthor: boolean) => [
   {
     id: 'jobId',
     header: t('provisioning.recent-jobs.column-job-id', 'Job ID'),
@@ -61,6 +72,29 @@ const getJobColumns = () => [
     header: t('provisioning.recent-jobs.column-action', 'Action'),
     cell: ({ row: { original: job } }: JobCell) => job.spec?.action,
   },
+  ...(showAuthor
+    ? [
+        {
+          id: 'author',
+          header: t('provisioning.recent-jobs.column-author', 'Author'),
+          cell: ({ row: { original: job } }: JobCell) => {
+            const annotations = job.metadata?.annotations;
+            return annotations?.[AnnoKeyProvisioningAuthor] || annotations?.[AnnoKeyProvisioningAuthorEmail];
+          },
+        },
+        {
+          id: 'origin',
+          header: t('provisioning.recent-jobs.column-origin', 'Origin'),
+          cell: ({ row: { original: job } }: JobCell) => {
+            const origin = job.metadata?.annotations?.[AnnoKeyProvisioningAuthorOrigin];
+            if (!origin) {
+              return t('provisioning.recent-jobs.origin-unknown', 'Unknown');
+            }
+            return originLabel(origin);
+          },
+        },
+      ]
+    : []),
   {
     id: 'started',
     header: t('provisioning.recent-jobs.column-started', 'Started'),
@@ -85,16 +119,39 @@ interface ExpandedRowProps {
 function ExpandedRow({ row }: ExpandedRowProps) {
   const hasSummary = Boolean(row.status?.summary?.length);
   const hasErrors = Boolean(row.status?.errors?.length);
+  const hasWarnings = Boolean(row.status?.warnings?.length);
   const hasSpec = Boolean(row.spec);
 
   // the action is already showing
   const data = useMemo(() => {
     const v: TraceKeyValuePair[] = [];
-    const action = row.spec?.action;
-    if (!action) {
+    const spec = row.spec;
+    const action = spec?.action;
+    if (!action || !spec) {
       return v;
     }
-    const def = row.spec?.[action];
+    const actionOptions: Record<string, object | undefined> = {
+      delete: spec.delete,
+      fixFolderMetadata: spec.fixFolderMetadata,
+      migrate: spec.migrate,
+      move: spec.move,
+      pr: spec.pr,
+      pull: spec.pull,
+      push: spec.push,
+    };
+    const annotations = row.metadata?.annotations;
+    for (const [key, anno] of [
+      ['author', AnnoKeyProvisioningAuthor],
+      ['authorEmail', AnnoKeyProvisioningAuthorEmail],
+      ['authorId', AnnoKeyProvisioningAuthorId],
+      ['authorOrigin', AnnoKeyProvisioningAuthorOrigin],
+    ]) {
+      const value = annotations?.[anno];
+      if (value) {
+        v.push({ key, value });
+      }
+    }
+    const def = actionOptions[action];
     if (!def) {
       return v;
     }
@@ -102,19 +159,11 @@ function ExpandedRow({ row }: ExpandedRowProps) {
       v.push({ key, value });
     }
     return v;
-  }, [row.spec]);
+  }, [row.spec, row.metadata?.annotations]);
 
-  if (!hasSummary && !hasErrors && !hasSpec) {
+  if (!hasSummary && !hasErrors && !hasWarnings && !hasSpec) {
     return null;
   }
-
-  const state = row.status?.state;
-  const isValidState = state && ['success', 'warning', 'error'].includes(state);
-  const alertProps = isValidState
-    ? {
-        [state]: { message: row.status?.message },
-      }
-    : null;
 
   return (
     <Box padding={2}>
@@ -127,7 +176,7 @@ function ExpandedRow({ row }: ExpandedRowProps) {
             <KeyValuesTable data={data} />
           </Stack>
         )}
-        {alertProps && <ProvisioningAlert {...alertProps} />}
+        {row.status && <JobAlerts status={row.status} />}
         {hasSummary && row.status?.summary && (
           <Stack direction="column" gap={2}>
             <Text variant="body" color="secondary">
@@ -139,6 +188,13 @@ function ExpandedRow({ row }: ExpandedRowProps) {
       </Stack>
     </Box>
   );
+}
+
+const REPO_TYPES: RepoType[] = ['local', 'git', 'github', 'githubEnterprise', 'gitlab', 'bitbucket'];
+
+function originLabel(origin: string): string {
+  const repoType = REPO_TYPES.find((type) => type === origin);
+  return (repoType ? getRepositoryTypeConfig(repoType)?.label : undefined) ?? origin;
 }
 
 function EmptyState() {
@@ -155,7 +211,8 @@ export function RecentJobs({ repo }: Props) {
   const [jobs, activeQuery, historicQuery] = useRepositoryAllJobs({
     repositoryName: repo.metadata?.name ?? 'x',
   });
-  const jobColumns = useMemo(() => getJobColumns(), []);
+  const showAuthor = useBooleanFlagValue('provisioning.userAttribution', false);
+  const jobColumns = useMemo(() => getJobColumns(showAuthor), [showAuthor]);
   const hasLoadedDataRef = useRef(false);
 
   if (activeQuery.data || historicQuery.data) {
@@ -211,7 +268,7 @@ export function RecentJobs({ repo }: Props) {
   };
 
   return (
-    <Card noMargin>
+    <Card noMargin data-testid={selectors.pages.Provisioning.RepositoryOverview.jobsCard}>
       <Card.Heading>
         <Trans i18nKey="provisioning.recent-jobs.jobs">Jobs</Trans>
       </Card.Heading>

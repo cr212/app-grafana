@@ -1,23 +1,23 @@
 import {
-  DataFrame,
+  type DataFrame,
   FALLBACK_COLOR,
-  Field,
+  type Field,
   FieldColorModeId,
-  FieldConfig,
+  type FieldConfig,
   FieldType,
   formattedValueToString,
   getFieldDisplayName,
   getValueFormat,
-  GrafanaTheme2,
+  type GrafanaTheme2,
   getActiveThreshold,
-  Threshold,
+  type Threshold,
   getFieldConfigWithMinMax,
   ThresholdsMode,
-  TimeRange,
+  type TimeRange,
   cacheFieldDisplayNames,
   outerJoinDataFrames,
-  ValueMapping,
-  ThresholdsConfig,
+  type ValueMapping,
+  type ThresholdsConfig,
   applyNullInsertThreshold,
   nullToValue,
   SpecialValueMatch,
@@ -25,19 +25,19 @@ import {
 import { maybeSortFrame, NULL_RETAIN } from '@grafana/data/internal';
 import { t } from '@grafana/i18n';
 import {
-  VizLegendOptions,
+  type VizLegendOptions,
   AxisPlacement,
   ScaleDirection,
   ScaleOrientation,
-  VisibilityMode,
-  TimelineValueAlignment,
-  HideableFieldConfig,
+  type VisibilityMode,
+  type TimelineValueAlignment,
+  type HideableFieldConfig,
   MappingType,
 } from '@grafana/schema';
-import { FIXED_UNIT, UPlotConfigBuilder, UPlotConfigPrepFn, VizLegendItem } from '@grafana/ui';
+import { FIXED_UNIT, UPlotConfigBuilder, type UPlotConfigPrepFn, type VizLegendItem } from '@grafana/ui';
 import { preparePlotData2, getStackingGroups } from '@grafana/ui/internal';
 
-import { getConfig, TimelineCoreOptions } from './timeline';
+import { getConfig, type TimelineCoreOptions } from './timeline';
 
 /**
  * @internal
@@ -159,6 +159,24 @@ export const preparePlotConfigBuilder: UPlotConfigPrepFn<UPlotConfigOptions> = (
     range: (u) => {
       const state = builder.getState();
       if (state.isPanning) {
+        if (state.isTimeRangePending) {
+          const propsRange = coreConfig.xRange(u);
+          const propsFrom = propsRange[0];
+          const propsTo = propsRange[1];
+
+          if (propsFrom != null && propsTo != null) {
+            const MIN_TIMESPAN_MS = 1;
+            const fromMatches = Math.abs(propsFrom - state.min) <= MIN_TIMESPAN_MS;
+            const toMatches = Math.abs(propsTo - state.max) <= MIN_TIMESPAN_MS;
+            const timeRangeHasUpdated = fromMatches && toMatches;
+
+            if (timeRangeHasUpdated) {
+              builder.setState({ isPanning: false });
+              return propsRange;
+            }
+          }
+        }
+
         return [state.min, state.max];
       }
       return coreConfig.xRange(u);
@@ -174,7 +192,7 @@ export const preparePlotConfigBuilder: UPlotConfigPrepFn<UPlotConfigOptions> = (
   });
 
   const xField = frame.fields[0];
-  const xAxisHidden = xField.config.custom.axisPlacement === AxisPlacement.Hidden;
+  const xAxisHidden = xField.config.custom?.axisPlacement === AxisPlacement.Hidden;
 
   builder.addAxis({
     show: !xAxisHidden,
@@ -256,7 +274,7 @@ function getSpanNulls(field: Field) {
 /**
  * Merge values by the threshold
  */
-export function mergeThresholdValues(field: Field, theme: GrafanaTheme2): Field | undefined {
+function mergeThresholdValues(field: Field, theme: GrafanaTheme2): Field | undefined {
   const thresholds = field.config.thresholds;
   if (field.type !== FieldType.number || !thresholds || !thresholds.steps.length) {
     return undefined;
@@ -593,7 +611,7 @@ export function prepareTimelineLegendItems(
   return getFieldLegendItem(allNonTimeFields(frames), theme);
 }
 
-export function getFieldLegendItem(fields: Field[], theme: GrafanaTheme2): VizLegendItem[] | undefined {
+function getFieldLegendItem(fields: Field[], theme: GrafanaTheme2): VizLegendItem[] | undefined {
   if (!fields.length) {
     return undefined;
   }

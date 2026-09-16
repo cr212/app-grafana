@@ -1,6 +1,6 @@
 import { advanceTo, clear } from 'jest-date-mock';
 
-import { dateTime } from '@grafana/data';
+import { dateTime, type DataQueryRequest } from '@grafana/data';
 import {
   SceneCanvasText,
   SceneFlexItem,
@@ -46,6 +46,14 @@ describe('PanelTimeRange', () => {
     expect(panelTime.state.timeInfo).toBe('Timeshift -2h');
   });
 
+  it('should preserve uppercase unit characters in timeshift label', () => {
+    const panelTime = new PanelTimeRange({ timeShift: '1M' });
+
+    buildAndActivateSceneFor(panelTime);
+
+    expect(panelTime.state.timeInfo).toBe('Timeshift -1M');
+  });
+
   it('should apply both relative time and time shift', () => {
     const panelTime = new PanelTimeRange({ timeFrom: '2h', timeShift: '2h' });
 
@@ -69,6 +77,60 @@ describe('PanelTimeRange', () => {
     buildAndActivateSceneFor(panelTime);
 
     expect(panelTime.state.timeInfo).toBe('Last 1 hour + compared to day before');
+  });
+
+  it('should apply time comparison relative to the time-shifted panel range', () => {
+    // Composition order: time shift first, then compare offset from the shifted range.
+    // Dashboard now-6h→now at 19:00, shift 2h → primary 11:00–17:00; compare 1d → 11:00–17:00 previous day.
+    const panelTime = new PanelTimeRange({ timeShift: '2h', compareWith: '1d' });
+
+    buildAndActivateSceneFor(panelTime);
+
+    expect(panelTime.state.value.from.toISOString()).toBe('2019-02-11T11:00:00.000Z');
+    expect(panelTime.state.value.to.toISOString()).toBe('2019-02-11T17:00:00.000Z');
+    expect(panelTime.state.timeInfo).toBe('Timeshift -2h + compared to day before');
+
+    const extraQueries = panelTime.getExtraQueries({
+      targets: [{ refId: 'A' }],
+      range: panelTime.state.value,
+    } as DataQueryRequest);
+
+    expect(extraQueries).toHaveLength(1);
+    expect(extraQueries[0].req.range.from.toISOString()).toBe('2019-02-10T11:00:00.000Z');
+    expect(extraQueries[0].req.range.to.toISOString()).toBe('2019-02-10T17:00:00.000Z');
+    expect(extraQueries[0].req.targets).toEqual([{ refId: 'A-compare' }]);
+  });
+
+  it('should give compare requests distinct refIds from the primary', () => {
+    const panelTime = new PanelTimeRange({ compareWith: '1d' });
+
+    buildAndActivateSceneFor(panelTime);
+
+    const extraQueries = panelTime.getExtraQueries({
+      targets: [{ refId: 'A' }, { refId: 'B', timeRangeCompare: false }, { refId: 'C' }],
+      range: panelTime.state.value,
+    } as DataQueryRequest);
+
+    expect(extraQueries).toHaveLength(1);
+    expect(extraQueries[0].req.targets).toEqual([{ refId: 'A-compare' }, { refId: 'C-compare' }]);
+  });
+
+  it('should set rangeRaw on compare requests from the shifted compare range', () => {
+    // Without this, spreading the primary request leaves rangeRaw.to as 'now', which makes
+    // Prometheus incremental caching treat the compare query as cache-eligible.
+    const panelTime = new PanelTimeRange({ compareWith: '1d' });
+
+    buildAndActivateSceneFor(panelTime);
+
+    const extraQueries = panelTime.getExtraQueries({
+      targets: [{ refId: 'A' }],
+      range: panelTime.state.value,
+      rangeRaw: { from: 'now-6h', to: 'now' },
+    } as DataQueryRequest);
+
+    expect(extraQueries).toHaveLength(1);
+    expect(extraQueries[0].req.rangeRaw).toEqual({ from: 'now-6h-1d', to: 'now-1d' });
+    expect(extraQueries[0].req.range.raw).toEqual({ from: 'now-6h-1d', to: 'now-1d' });
   });
 
   it('should update timeInfo when timeShift and timeFrom are variable expressions', async () => {
@@ -128,7 +190,7 @@ describe('PanelTimeRange', () => {
     expect(panelTime.state.value.to.format('Z')).toBe('+00:00'); // UTC
   });
 
-  it('should handle invalid time reference in timeShift', () => {
+  it('should handle invalid time reference in timeShift with relative time range', () => {
     const panelTime = new PanelTimeRange({ timeShift: 'now-1d' });
 
     buildAndActivateSceneFor(panelTime);
@@ -137,6 +199,22 @@ describe('PanelTimeRange', () => {
     // Should not be affected by invalid timeShift
     expect(panelTime.state.from).toBe('now-6h');
     expect(panelTime.state.to).toBe('now');
+  });
+
+  it('should handle invalid time reference in timeShift with absolute time range', () => {
+    const panelTime = new PanelTimeRange({ timeShift: 'now-1d' });
+    const panel = new SceneCanvasText({ text: 'Hello', $timeRange: panelTime });
+    const absoluteFrom = '2019-02-11T10:00:00.000Z';
+    const absoluteTo = '2019-02-11T16:00:00.000Z';
+    const scene = new SceneFlexLayout({
+      $timeRange: new SceneTimeRange({ from: absoluteFrom, to: absoluteTo }),
+      children: [new SceneFlexItem({ body: panel })],
+    });
+    activateFullSceneTree(scene);
+
+    expect(panelTime.state.timeInfo).toBe('invalid timeshift');
+    expect(panelTime.state.from).toBe(absoluteFrom);
+    expect(panelTime.state.to).toBe(absoluteTo);
   });
 
   it('should handle invalid time reference in timeShift combined with timeFrom', () => {
@@ -151,6 +229,66 @@ describe('PanelTimeRange', () => {
     // Should not be affected by invalid timeShift
     expect(panelTime.state.from).toBe('now-2h');
     expect(panelTime.state.to).toBe('now');
+  });
+
+  describe('from/to state format for liveNow compatibility', () => {
+    it('should store relative strings in from/to when timeShift is applied to relative time range', () => {
+      const panelTime = new PanelTimeRange({ timeShift: '2h' });
+
+      buildAndActivateSceneFor(panelTime);
+
+      expect(panelTime.state.from).toBe('now-6h-2h');
+      expect(panelTime.state.to).toBe('now-2h');
+      expect(panelTime.state.value.raw.from).toBe('now-6h-2h');
+      expect(panelTime.state.value.raw.to).toBe('now-2h');
+    });
+
+    it('should store relative strings when both timeFrom and timeShift are applied', () => {
+      const panelTime = new PanelTimeRange({ timeFrom: '2h', timeShift: '1h' });
+
+      buildAndActivateSceneFor(panelTime);
+
+      expect(panelTime.state.from).toBe('now-2h-1h');
+      expect(panelTime.state.to).toBe('now-1h');
+    });
+
+    it('should store ISO strings when timeShift is applied to absolute time range', () => {
+      const panelTime = new PanelTimeRange({ timeShift: '1h' });
+      const panel = new SceneCanvasText({ text: 'Hello', $timeRange: panelTime });
+      const absoluteFrom = '2019-02-11T10:00:00.000Z';
+      const absoluteTo = '2019-02-11T16:00:00.000Z';
+      const scene = new SceneFlexLayout({
+        $timeRange: new SceneTimeRange({ from: absoluteFrom, to: absoluteTo }),
+        children: [new SceneFlexItem({ body: panel })],
+      });
+      activateFullSceneTree(scene);
+
+      expect(panelTime.state.from).toBe('2019-02-11T09:00:00.000Z');
+      expect(panelTime.state.to).toBe('2019-02-11T15:00:00.000Z');
+    });
+
+    it('should update from/to when ancestor time range changes', () => {
+      const panelTime = new PanelTimeRange({ timeShift: '1h' });
+      const sceneTimeRange = new SceneTimeRange({ from: 'now-6h', to: 'now' });
+      const panel = new SceneCanvasText({ text: 'Hello', $timeRange: panelTime });
+      const scene = new SceneFlexLayout({
+        $timeRange: sceneTimeRange,
+        children: [new SceneFlexItem({ body: panel })],
+      });
+      activateFullSceneTree(scene);
+
+      expect(panelTime.state.from).toBe('now-6h-1h');
+      expect(panelTime.state.to).toBe('now-1h');
+
+      sceneTimeRange.onTimeRangeChange({
+        from: dateTime('2019-02-11T12:00:00.000Z'),
+        to: dateTime('2019-02-11T18:00:00.000Z'),
+        raw: { from: 'now-12h', to: 'now' },
+      });
+
+      expect(panelTime.state.from).toBe('now-12h-1h');
+      expect(panelTime.state.to).toBe('now-1h');
+    });
   });
 
   describe('onTimeRangeChange', () => {

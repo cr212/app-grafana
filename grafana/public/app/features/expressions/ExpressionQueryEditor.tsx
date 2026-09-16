@@ -1,24 +1,35 @@
 import { css } from '@emotion/css';
-import { useCallback, useEffect, useRef } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useId, useRef } from 'react';
 
-import { DataSourceApi, FeatureState, GrafanaTheme2, QueryEditorProps } from '@grafana/data';
-import { t, Trans } from '@grafana/i18n';
-import { reportInteraction } from '@grafana/runtime';
-import { Button, FeatureBadge, IconButton, InlineField, PopoverContent, useStyles2 } from '@grafana/ui';
+import { type DataSourceApi, FeatureState, type GrafanaTheme2, type QueryEditorProps } from '@grafana/data';
+import { Trans } from '@grafana/i18n';
+import {
+  Button,
+  FeatureBadge,
+  IconButton,
+  InlineField,
+  InlineLabel,
+  type PopoverContent,
+  useStyles2,
+} from '@grafana/ui';
 
 import { ClassicConditions } from './components/ClassicConditions';
 import { ExpressionTypeDropdown } from './components/ExpressionTypeDropdown';
 import { Math } from './components/Math';
 import { Reduce } from './components/Reduce';
 import { Resample } from './components/Resample';
-import { SqlExpr } from './components/SqlExpr';
 import { Threshold } from './components/Threshold';
-import { ExpressionQuery, ExpressionQueryType, expressionTypes } from './types';
+import { type ExpressionQuery, ExpressionQueryType, expressionTypes } from './types';
 import { getDefaults } from './utils/expressionTypes';
 
 export type ExpressionQueryEditorProps = QueryEditorProps<DataSourceApi<ExpressionQuery>, ExpressionQuery>;
 
 const labelWidth = 15;
+const SqlExpr = lazy(() =>
+  import('./components/SqlExpressions/SqlExpr').then((module) => ({
+    default: module.SqlExpr,
+  }))
+);
 
 type NonClassicExpressionType = Exclude<ExpressionQueryType, ExpressionQueryType.classic>;
 type ExpressionTypeConfigStorage = Partial<Record<NonClassicExpressionType, string>>;
@@ -94,24 +105,9 @@ function useExpressionsCache() {
 export function ExpressionQueryEditor(props: ExpressionQueryEditorProps) {
   const { query, queries, onRunQuery, onChange, app } = props;
   const { getCachedExpression, setCachedExpression } = useExpressionsCache();
+  const labelId = useId();
 
   const styles = useStyles2(getStyles);
-
-  const initialExpressionRef = useRef(query.expression);
-  const hasTrackedAddExpression = useRef(false);
-
-  useEffect(() => {
-    // Only track if 1) query has a type, and 2) we haven't tracked yet for this component instance, and
-    // 3) initial expression was empty (indicating a new expression, not editing existing)
-    if (query.type && !hasTrackedAddExpression.current && !initialExpressionRef.current) {
-      reportInteraction('dashboards_expression_interaction', {
-        action: 'add_expression',
-        expression_type: query.type,
-        context: 'panel_query_section',
-      });
-      hasTrackedAddExpression.current = true;
-    }
-  }, [query.type, query.refId]);
 
   useEffect(() => {
     setCachedExpression(query.type, query.expression);
@@ -148,14 +144,16 @@ export function ExpressionQueryEditor(props: ExpressionQueryEditorProps) {
 
       case ExpressionQueryType.sql:
         return (
-          <SqlExpr
-            onChange={onChange}
-            query={query}
-            refIds={refIds}
-            queries={queries}
-            metadata={props}
-            onRunQuery={onRunQuery}
-          />
+          <Suspense fallback={null}>
+            <SqlExpr
+              onChange={onChange}
+              query={query}
+              refIds={refIds}
+              queries={queries}
+              metadata={props}
+              onRunQuery={onRunQuery}
+            />
+          </Suspense>
         );
     }
   };
@@ -166,11 +164,20 @@ export function ExpressionQueryEditor(props: ExpressionQueryEditorProps) {
     <div>
       <div className={styles.operationRow}>
         <InlineField
-          label={t('expressions.expression-query-editor.label-operation', 'Operation')}
-          labelWidth={labelWidth}
+          label={
+            <InlineLabel width={labelWidth} id={labelId}>
+              <Trans i18nKey="expressions.expression-query-editor.label-operation">Operation</Trans>
+            </InlineLabel>
+          }
         >
           <ExpressionTypeDropdown handleOnSelect={onSelectExpressionType}>
-            <Button fill="outline" icon="angle-down" iconPlacement="right" variant="secondary">
+            <Button
+              aria-describedby={labelId}
+              fill="outline"
+              icon="angle-down"
+              iconPlacement="right"
+              variant="secondary"
+            >
               {expressionTypes.find(({ value }) => value === query.type)?.label}
             </Button>
           </ExpressionTypeDropdown>

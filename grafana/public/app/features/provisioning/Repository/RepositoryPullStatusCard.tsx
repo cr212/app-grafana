@@ -1,12 +1,13 @@
 import { css, cx } from '@emotion/css';
 
-import { GrafanaTheme2 } from '@grafana/data/';
+import { type GrafanaTheme2 } from '@grafana/data/';
+import { selectors } from '@grafana/e2e-selectors';
 import { t, Trans } from '@grafana/i18n';
 import { Badge, Card, Grid, Text, TextLink, useStyles2 } from '@grafana/ui';
-import { Repository } from 'app/api/clients/provisioning/v0alpha1';
+import { type Repository } from 'app/api/clients/provisioning/v0alpha1';
 
 import { MessageList } from '../Shared/MessageList';
-import { getRepoCommitUrl } from '../utils/git';
+import { formatRepoUrl, getRemoteConfig, getRepoCommitUrl, getRepoHrefForProvider } from '../utils/git';
 import { getStatusColor, getStatusIcon } from '../utils/repositoryStatus';
 import { formatTimestamp } from '../utils/time';
 
@@ -20,10 +21,17 @@ export function RepositoryPullStatusCard({ repo }: { repo: Repository }) {
 
   const isWorking = status?.sync.state === 'working' || status?.sync.state === 'pending';
 
+  const spec = repo.spec;
+  const remoteConfig = getRemoteConfig(spec);
+  const repoUrl = remoteConfig?.url;
+  const branch = remoteConfig?.branch;
+  const path = remoteConfig?.path ?? spec?.local?.path;
+  const repoHref = getRepoHrefForProvider(repo.spec);
+
   const { url: lastCommitUrl, hasUrl } = getRepoCommitUrl(repo.spec, status?.sync.lastRef);
 
   return (
-    <Card noMargin className={styles.card}>
+    <Card noMargin className={styles.card} data-testid={selectors.pages.Provisioning.RepositoryOverview.pullStatusCard}>
       <Card.Heading>
         <Trans i18nKey="provisioning.repository-overview.pull-status">Pull status</Trans>
       </Card.Heading>
@@ -87,6 +95,48 @@ export function RepositoryPullStatusCard({ repo }: { repo: Repository }) {
               </>
             )}
           </div>
+
+          {/* Repository URL */}
+          {repoUrl && (
+            <>
+              <Text color="secondary">
+                <Trans i18nKey="provisioning.repository-overview.repo-url">Repository URL:</Trans>
+              </Text>
+              <div className={styles.spanTwo}>
+                {repoHref ? (
+                  <TextLink href={repoHref} external>
+                    {formatRepoUrl(repoUrl)}
+                  </TextLink>
+                ) : (
+                  <Text variant="body">{formatRepoUrl(repoUrl)}</Text>
+                )}
+              </div>
+            </>
+          )}
+
+          {/* Branch */}
+          {branch && (
+            <>
+              <Text color="secondary">
+                <Trans i18nKey="provisioning.repository-overview.branch">Branch:</Trans>
+              </Text>
+              <div className={styles.spanTwo}>
+                <Text variant="body">{branch}</Text>
+              </div>
+            </>
+          )}
+
+          {/* Path */}
+          {path && (
+            <>
+              <Text color="secondary">
+                <Trans i18nKey="provisioning.repository-overview.path">Path:</Trans>
+              </Text>
+              <div className={styles.spanTwo}>
+                <Text variant="body">{path}</Text>
+              </div>
+            </>
+          )}
         </Grid>
       </Card.Description>
       <Card.Actions className={styles.actions}>
@@ -105,6 +155,7 @@ const getStyles = (theme: GrafanaTheme2) => {
     }),
     actions: css({
       marginTop: 'auto',
+      paddingTop: theme.spacing(1),
     }),
     spanTwo: css({
       gridColumn: 'span 2',

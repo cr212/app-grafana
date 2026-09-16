@@ -1,6 +1,13 @@
+import { type VariableType } from '@grafana/data';
 import { config, reportInteraction } from '@grafana/runtime';
 
-import { DashboardTrackingInfo, DynamicDashboardsTrackingInformation } from '../serialization/DashboardSceneSerializer';
+import { type GroupConditionConditionType } from '../conditional-rendering/group/types';
+import {
+  type DashboardTrackingInfo,
+  type DynamicDashboardsTrackingInformation,
+} from '../serialization/DashboardSceneSerializer';
+
+import { type GlobalVariablesMode } from './predefinedVariableDenyList';
 
 let isScenesContextSet = false;
 
@@ -27,13 +34,13 @@ export const DashboardInteractions = {
     reportDashboardInteraction('init_dashboard_completed', properties);
   },
 
-  dashboardCopied: (properties: { name: string; url: string }) => {
+  dashboardCopied: (properties: { name: string; url: string; diff_count?: number }) => {
     reportInteraction('grafana_dashboard_copied', properties);
   },
 
   dashboardCreatedOrSaved: (
     isNew: boolean | undefined,
-    properties:
+    properties: (
       | ({
           name: string;
           url: string;
@@ -53,6 +60,10 @@ export const DashboardInteractions = {
           customGridLayoutCount: number;
           panelsByDatasourceType: Record<string, number>;
         } & DashboardLibraryTrackingInfo)
+    ) & {
+      // size of the saved edit (diffs between the initial and saved models); scene save path only
+      diff_count?: number;
+    }
   ) => {
     reportDashboardInteraction(isNew ? 'created' : 'saved', properties, 'grafana_dashboard');
   },
@@ -69,6 +80,12 @@ export const DashboardInteractions = {
     reportDashboardInteraction('exit_edit_button_clicked');
   },
 
+  // grafana_dashboards_edit_discarded
+  // when a user discards changes by confirming exit from edit mode without saving
+  dashboardEditDiscarded: () => {
+    reportDashboardInteraction('edit_discarded');
+  },
+
   // grafana_dashboards_outline_clicked
   // when a user opens the outline view
   dashboardOutlineClicked: () => {
@@ -77,8 +94,12 @@ export const DashboardInteractions = {
 
   // grafana_dashboards_outline_item_clicked
   // when a user clicks on an element of the outline
-  outlineItemClicked: (properties: { index: number; depth: number }) => {
-    reportDashboardInteraction('outline_item_clicked', properties);
+  outlineItemClicked: (props: { index: number; depth: number; isEditing?: boolean }) => {
+    reportDashboardInteraction('outline_item_clicked', {
+      index: props.index,
+      depth: props.depth,
+      mode: props.isEditing ? 'edit' : 'view',
+    });
   },
 
   // dashboards_add_variable_button_clicked
@@ -87,19 +108,103 @@ export const DashboardInteractions = {
     reportDashboardInteraction('add_variable_button_clicked', properties);
   },
 
+  addLinkButtonClicked: (properties: { source: 'edit_pane' }) => {
+    reportDashboardInteraction('add_link_button_clicked', properties);
+  },
+
+  addFilterButtonClicked: (properties: { source: 'edit_pane' }) => {
+    reportDashboardInteraction('add_filter_button_clicked', properties);
+  },
+
+  addSectionFilterButtonClicked: (properties: { source: 'edit_pane' }) => {
+    reportDashboardInteraction('add_section_filter_button_clicked', properties);
+  },
+
+  // dashboards_new_variable_type_selected
+  // when a user selects a variable type when creating a new variable
+  variableTypeSelected: (properties: { type: string }) => {
+    reportDashboardInteraction('new_variable_type_selected', properties);
+  },
+
+  variableTypeChanged: (properties: { old: VariableType; new: VariableType }) => {
+    reportDashboardInteraction('variable_type_changed', properties);
+  },
+
+  // dashboards_new_section_variable_type_selected
+  // when a user selects a variable type when creating a new section (row/tab) variable
+  sectionVariableTypeSelected: (properties: { type: string; sectionOwner: 'row' | 'tab' | undefined }) => {
+    reportDashboardInteraction('new_section_variable_type_selected', properties);
+  },
+
+  // duplicate_variable_button_clicked & delete_variable_button_clicked
+  // when a user performs an action on a variable
+  variableActionButtonClicked: (action: 'duplicate' | 'delete', properties: { type: string }) => {
+    reportDashboardInteraction(`${action}_variable_button_clicked`, properties);
+  },
+
+  // dashboards_variables_reordered
+  // when a user drags and drops a variable in the content outline
+  variablesReordered: (properties: { source: 'edit_pane' }) => {
+    reportDashboardInteraction('variables_reordered', properties);
+  },
+
+  // dashboards_variable_value_changed
+  // when a user changes a variable value from dashboard controls, the controls menu, or a section
+  variableValueChanged: (properties: { type: string }) => {
+    reportDashboardInteraction('variable_value_changed', properties);
+  },
+
+  // dashboards_global_variables_loaded
+  // after global/folder variables are resolved for a V2 dashboard load
+  globalVariablesLoaded: (properties: {
+    global_count: number;
+    folder_count: number;
+    total_count: number;
+    mode?: GlobalVariablesMode;
+  }) => {
+    reportDashboardInteraction('global_variables_loaded', properties);
+  },
+
+  // dashboards_global_variables_mode_changed
+  // when a user changes the predefined variables radio (None / All / Global / Folder)
+  globalVariablesModeChanged: (properties: { from_mode?: GlobalVariablesMode; to_mode: GlobalVariablesMode }) => {
+    reportDashboardInteraction('global_variables_mode_changed', properties);
+  },
+
+  // dashboards_add_annotation_button_clicked
+  // when a user clicks on 'Add annotation'
+  addAnnotationButtonClicked: (properties: { source: 'edit_pane' }) => {
+    reportDashboardInteraction('add_annotation_button_clicked', properties);
+  },
+  // dashboards_annotations_reordered
+  // when a user drags and drops an annotation in the content outline
+  annotationsReordered: (properties: { source: 'edit_pane' }) => {
+    reportDashboardInteraction('annotations_reordered', properties);
+  },
+
   panelActionClicked(
-    item: 'configure' | 'edit' | 'copy' | 'duplicate' | 'delete' | 'view',
+    item: 'configure' | 'configure_dropdown' | 'edit' | 'copy' | 'duplicate' | 'delete' | 'view' | 'use_library_panel',
     id: number,
-    source: 'panel' | 'edit_pane'
+    source: 'panel' | 'edit_pane' | 'keyboard',
+    panelType?: string
   ) {
-    reportDashboardInteraction('panel_action_clicked', { item, id, source });
+    reportDashboardInteraction('panel_action_clicked', { item, id, source, panelType });
+  },
+
+  // Panel styles copy/paste interactions
+  panelStylesMenuClicked(action: 'copy' | 'paste', panelType: string, panelId: number, error?: boolean) {
+    reportDashboardInteraction('panel_styles_menu_clicked', { action, panelType, panelId, error });
   },
 
   // Dashboard edit item actions
   // dashboards_edit_action_clicked: when user adds or removes an item in edit mode
   // props: { item: string } - item is one of: add_panel, group_row, group_tab, ungroup, paste_panel, remove_row, remove_tab
-  trackAddPanelClick() {
-    reportDashboardInteraction('edit_action_clicked', { item: 'add_panel' });
+  trackAddPanelClick(
+    source: 'sidebar' | 'canvas' = 'canvas',
+    target?: 'row' | 'tab' | 'dashboard',
+    action: 'drop' | 'click' = 'click'
+  ) {
+    reportDashboardInteraction('edit_action_clicked', { item: 'add_panel', source, target, action });
   },
   trackGroupRowClick() {
     reportDashboardInteraction('edit_action_clicked', { item: 'group_row' });
@@ -110,16 +215,16 @@ export const DashboardInteractions = {
   trackUngroupClick() {
     reportDashboardInteraction('edit_action_clicked', { item: 'ungroup' });
   },
-  trackPastePanelClick() {
-    reportDashboardInteraction('edit_action_clicked', { item: 'paste_panel' });
+  trackPastePanelClick(
+    source: 'sidebar' | 'canvas' | 'editPaneHeader' | 'keyboard' = 'canvas',
+    target?: 'row' | 'tab' | 'dashboard',
+    action: 'drop' | 'click' | 'keyboard' = 'click'
+  ) {
+    reportDashboardInteraction('edit_action_clicked', { item: 'paste_panel', source, target, action });
   },
-  trackRemoveRowClick() {
-    reportDashboardInteraction('edit_action_clicked', { item: 'remove_row' });
+  trackDeleteDashboardElement(elementType: string) {
+    reportDashboardInteraction('edit_action_clicked', { item: `remove_${elementType.toLowerCase()}` });
   },
-  trackRemoveTabClick() {
-    reportDashboardInteraction('edit_action_clicked', { item: 'remove_tab' });
-  },
-
   panelLinkClicked: (properties?: Record<string, unknown>) => {
     reportDashboardInteraction('panelheader_datalink_clicked', properties);
   },
@@ -128,6 +233,15 @@ export const DashboardInteractions = {
   },
   panelCancelQueryClicked: (properties?: Record<string, unknown>) => {
     reportDashboardInteraction('panelheader_cancelquery_clicked', properties);
+  },
+
+  //Conditional rendering
+  // track when user clicks on Add and Remove rules button in conditional rendering
+  clickAddConditionalRuleButton: (properties: { ruleId: GroupConditionConditionType }) => {
+    reportDashboardInteraction('click_add_conditional_rule_button', properties);
+  },
+  clickRemoveConditionalRuleButton: (properties: { ruleId: GroupConditionConditionType }) => {
+    reportDashboardInteraction('click_remove_conditional_rule_button', properties);
   },
 
   // Dashboard interactions from toolbar
@@ -140,14 +254,17 @@ export const DashboardInteractions = {
   toolbarShareClick: () => {
     reportDashboardInteraction('toolbar_actions_clicked', { item: 'share' });
   },
-  toolbarShareDropdownClick: () => {
-    reportDashboardInteraction('toolbar_actions_clicked', { item: 'share_dropdown' });
-  },
   toolbarAddClick: () => {
     reportDashboardInteraction('toolbar_actions_clicked', { item: 'add' });
   },
-
   // Sharing interactions:
+  toolbarShareDropdownClick: () => {
+    reportDashboardInteraction('toolbar_actions_clicked', { item: 'share_dropdown' });
+  },
+  // clicking on a specific share option in the toolbar share button dropdown
+  toolbarShareDropdownOptionClick: (option: string) => {
+    reportDashboardInteraction('toolbar_share_option_clicked', { item: 'share_dropdown_option', option });
+  },
   sharingCategoryClicked: (properties?: Record<string, unknown>) => {
     reportSharingInteraction('sharing_category_clicked', properties);
   },
@@ -247,7 +364,46 @@ export const DashboardInteractions = {
   copyImageUrlClicked: (properties?: Record<string, unknown>) => {
     reportDashboardInteraction('dashboard_image_url_copied', properties);
   },
+
+  // move item interactions
+  trackMoveItem: (item: 'panel' | 'row' | 'tab', action: 'drag' | 'drop', context: { isCrossLayout: boolean }) => {
+    const properties = { item, action, context };
+    reportDashboardInteraction('move_item', properties);
+  },
+
+  // fired when the dashboard scene enters edit mode; source = how it was opened (Edit button vs assistant)
+  editSessionStarted: (properties: { dashboard_uid?: string; source: 'assistant' | 'user' }) => {
+    reportDashboardInteraction('edit_session_started', properties);
+  },
+
+  // click "Take me there" button from the dashboard settings for annotations, variables or the JSON model
+  takeMeToSidebarClicked: (properties: { item: 'annotations' | 'variables' | 'json-model' }) => {
+    reportDashboardInteraction('take_me_to_sidebar_clicked', properties);
+  },
+
+  viewPanelAction: (properties: { action?: string; value: string }) => {
+    reportDashboardInteraction('view_panel_action', properties);
+  },
+
+  setVisualOption: (properties?: { ui: 'panel-edit' | 'view-panel'; option: string; value: string }) => {
+    reportDashboardInteraction('set_visualization_option', properties);
+  },
+
+  // tracks attempts to resize a panel that is managed by auto layout
+  autoLayoutResizeIntercepted: (properties: { scope: AutoLayoutScope; trigger: 'hover' | 'drag' }) => {
+    reportDashboardInteraction('auto_layout_resize_intercepted', properties);
+  },
+
+  // track the action a user took after being intercepted. `switch_to_custom` vs `edit_auto_layout`
+  autoLayoutResizeInterceptAction: (properties: {
+    scope: AutoLayoutScope;
+    action: 'edit_auto_layout' | 'switch_to_custom' | 'dismissed';
+  }) => {
+    reportDashboardInteraction('auto_layout_resize_intercept_action', properties);
+  },
 };
+
+export type AutoLayoutScope = 'dashboard' | 'row' | 'tab';
 
 const reportDashboardInteraction = (
   name: string,

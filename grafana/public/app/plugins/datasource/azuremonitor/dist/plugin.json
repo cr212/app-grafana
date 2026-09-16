@@ -175,10 +175,10 @@
                 "path": "img/azure_monitor_cpu.png"
             }
         ],
-        "version": "12.4.0-pre"
+        "version": "13.2.2"
     },
     "dependencies": {
-        "grafanaDependency": ">=10.3.0",
+        "grafanaDependency": ">=12.3.0",
         "plugins": []
     },
     "metrics": true,

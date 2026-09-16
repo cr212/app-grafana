@@ -5,8 +5,8 @@ import { createLogLine } from '../mocks/logRow';
 import { generateLogGrammar, generateTextMatchGrammar } from './grammar';
 
 describe('generateLogGrammar', () => {
-  function generateScenario(entry: string) {
-    const log = createLogLine({ labels: { place: 'luna', source: 'logs' }, entry });
+  function generateScenario(entry: string, labels: Record<string, string> = { place: 'luna', source: 'logs' }) {
+    const log = createLogLine({ labels, entry });
     // Access body getter to trigger LogLineModel internals
     expect(log.body).toBeDefined();
     const grammar = generateLogGrammar(log);
@@ -75,6 +75,35 @@ describe('generateLogGrammar', () => {
     expect.assertions(7);
   });
 
+  test.each([['1m30s'], ['2h30m45s'], ['1m30.5s'], ['1h30m'], ['1d2h']])(
+    'Identifies multi-unit durations: %s',
+    (duration: string) => {
+      const { tokens } = generateScenario(duration);
+      if (tokens[0] instanceof Token) {
+        expect(tokens[0].content).toBe(duration);
+        expect(tokens[0].type).toBe('log-token-duration');
+      }
+      expect.assertions(3);
+    }
+  );
+
+  test.each([['1w'], ['2y'], ['1y6m'], ['1w2d3h']])(
+    'Identifies durations with week/year units: %s',
+    (duration: string) => {
+      const { tokens } = generateScenario(duration);
+      if (tokens[0] instanceof Token) {
+        expect(tokens[0].content).toBe(duration);
+        expect(tokens[0].type).toBe('log-token-duration');
+      }
+      expect.assertions(3);
+    }
+  );
+
+  test('Does not identify invalid duration-like strings', () => {
+    const { tokens } = generateScenario('5min');
+    expect(tokens.every((token) => !(token instanceof Token) || token.type !== 'log-token-duration')).toBe(true);
+  });
+
   test.each(['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'HEAD', 'OPTIONS', 'TRACE', 'CONNECT'])(
     'Identifies HTTP methods',
     (method: string) => {
@@ -86,6 +115,15 @@ describe('generateLogGrammar', () => {
       expect.assertions(3);
     }
   );
+
+  test('Identifies labels with special regexp characters', () => {
+    const { tokens } = generateScenario('place(*)=luna', { 'place(*)': 'luna', source: 'logs' });
+    if (tokens[0] instanceof Token) {
+      expect(tokens[0].content).toBe('place(*)=');
+      expect(tokens[0].type).toBe('log-token-label');
+    }
+    expect.assertions(3);
+  });
 });
 
 describe('generateTextMatchGrammar', () => {

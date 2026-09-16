@@ -1,6 +1,7 @@
 import { logMeasurement, reportInteraction } from '@grafana/runtime';
-import { performanceUtils } from '@grafana/scenes';
+import { type performanceUtils } from '@grafana/scenes';
 
+import { consumeDashboardFetchTiming, FETCH_ATTRIBUTION_MAX_LEAD_MS } from './DashboardFetchTiming';
 import { SLOW_OPERATION_THRESHOLD_MS } from './performanceConstants';
 import {
   registerPerformanceObserver,
@@ -197,9 +198,63 @@ export class DashboardAnalyticsAggregator implements performanceUtils.ScenePerfo
   }
 
   /**
+   * Send panel_render interactions for each panel with aggregated metrics
+   */
+  private sendPanelRenderInteractions(data: performanceUtils.DashboardInteractionCompleteData): void {
+    const panelMetrics = this.getPanelMetrics();
+
+    panelMetrics.forEach((panel) => {
+      const totalPanelTime =
+        panel.totalQueryTime +
+        panel.totalTransformationTime +
+        panel.totalRenderTime +
+        panel.totalFieldConfigTime +
+        panel.pluginLoadTime;
+
+      // logMeasurement requires numeric values in second parameter, metadata in third
+      const measurementValues = {
+        totalTime: Math.round(totalPanelTime * 10) / 10,
+        // Per-phase breakdown of total_time. networkDuration is the data-fetch (query) time; the
+        // remaining four are the panel processing/render phases. Together they sum to total_time.
+        networkDuration: Math.round(panel.totalQueryTime * 10) / 10,
+        renderDuration: Math.round(panel.totalRenderTime * 10) / 10,
+        transformDuration: Math.round(panel.totalTransformationTime * 10) / 10,
+        fieldConfigDuration: Math.round(panel.totalFieldConfigTime * 10) / 10,
+        pluginLoadDuration: Math.round(panel.pluginLoadTime * 10) / 10,
+        queryCount: panel.queryOperations.length,
+        transformCount: panel.transformationOperations.length,
+        renderCount: panel.renderOperations.length,
+        fieldConfigCount: panel.fieldConfigOperations.length,
+        pluginLoadCount: panel.pluginLoadTime > 0 ? 1 : 0,
+      };
+
+      logMeasurement('panel_render', measurementValues, {
+        panelKey: panel.panelKey,
+        pluginId: panel.pluginId,
+        panelId: panel.panelId,
+        operationId: data.operationId, // Shared operationId for correlating with dashboard_render
+      });
+    });
+  }
+
+  /**
    * Send analytics report for dashboard interactions
    */
   private sendAnalyticsReport(data: performanceUtils.DashboardInteractionCompleteData): void {
+    // Consumed (not just read) - the fetch duration belongs only to the interaction that
+    // actually loaded the definition. Later interactions on the same dashboard (refresh,
+    // time_range_change, ...) must not re-report it. This is the only call site, so
+    // consuming here is safe.
+    // data.timestamp is the profile's end, data.duration spans back to its start - a fetch
+    // recorded any earlier than that (minus a small allowance for the scene-transform work
+    // that sits between the fetch resolving and the profile starting) belongs to an
+    // abandoned/cancelled load, not this interaction.
+    const profileStart = data.timestamp - (data.duration || 0);
+    const dashboardFetchDuration = consumeDashboardFetchTiming(
+      this.dashboardUID,
+      profileStart - FETCH_ATTRIBUTION_MAX_LEAD_MS
+    );
+
     const payload = {
       duration: data.duration || 0,
       networkDuration: data.networkDuration || 0,
@@ -208,6 +263,10 @@ export class DashboardAnalyticsAggregator implements performanceUtils.ScenePerfo
       timeSinceBoot: performance.measure('time_since_boot', 'frontend_boot_js_done_time_seconds').duration,
       longFramesCount: data.longFramesCount,
       longFramesTotalTime: data.longFramesTotalTime,
+      // Omitted entirely when unknown (e.g. cached scene, no matching fetch recorded) rather than reported as 0.
+      ...(dashboardFetchDuration !== undefined && {
+        dashboardFetchDuration: Math.round(dashboardFetchDuration * 10) / 10,
+      }),
       ...getPerformanceMemory(),
     };
 
@@ -218,6 +277,7 @@ export class DashboardAnalyticsAggregator implements performanceUtils.ScenePerfo
     reportInteraction('dashboard_render', {
       interactionType: data.interactionType,
       uid: this.dashboardUID,
+      operationId: data.operationId, // OperationId for correlating with panel_render interactions
       ...payload,
     });
 
@@ -225,7 +285,11 @@ export class DashboardAnalyticsAggregator implements performanceUtils.ScenePerfo
       interactionType: data.interactionType,
       dashboard: this.dashboardUID,
       title: this.dashboardTitle,
+      operationId: data.operationId, // OperationId for correlating with panel_render interactions
     });
+
+    // Send individual panel_render interactions
+    this.sendPanelRenderInteractions(data);
   }
 
   /**
@@ -349,6 +413,37 @@ export class DashboardAnalyticsAggregator implements performanceUtils.ScenePerfo
 
         writePerformanceGroupEnd();
       });
+    }
+
+    // Panel render interactions summary
+    if (panelMetrics && panelMetrics.length > 0) {
+      writePerformanceGroupStart('DAA', `📤 Panel render interactions: ${panelMetrics.length} panels reported`);
+
+      panelMetrics.forEach((panel) => {
+        const totalPanelTime =
+          panel.totalQueryTime +
+          panel.totalTransformationTime +
+          panel.totalRenderTime +
+          panel.totalFieldConfigTime +
+          panel.pluginLoadTime;
+
+        const isSlowPanel = totalPanelTime > SLOW_OPERATION_THRESHOLD_MS;
+
+        writePerformanceGroupLog('DAA', `🎨 ${panel.pluginId}-${panel.panelId}:`, {
+          totalTime: Math.round(totalPanelTime * 10) / 10,
+          operations: {
+            queries: panel.queryOperations.length,
+            transforms: panel.transformationOperations.length,
+            renders: panel.renderOperations.length,
+            fieldConfigs: panel.fieldConfigOperations.length,
+            pluginLoads: panel.pluginLoadTime > 0 ? 1 : 0,
+          },
+          isSlowPanel: isSlowPanel,
+          ...(isSlowPanel && { warning: 'SLOW' }),
+        });
+      });
+
+      writePerformanceGroupEnd();
     }
 
     writePerformanceGroupEnd();

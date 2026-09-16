@@ -1,13 +1,16 @@
 import { http, HttpResponse } from 'msw';
-import { ComponentProps } from 'react';
+import { type ComponentProps } from 'react';
 import { useParams } from 'react-router-dom-v5-compat';
-import AutoSizer from 'react-virtualized-auto-sizer';
-import { render as testRender, screen, waitFor } from 'test/test-utils';
+import type AutoSizer from 'react-virtualized-auto-sizer';
+import { of } from 'rxjs';
+import { act, render as testRender, screen, waitFor, testWithFeatureToggles } from 'test/test-utils';
 
+import { type DataSourceInstanceListItem } from '@grafana/data';
 import { selectors } from '@grafana/e2e-selectors';
 import { config, setBackendSrv } from '@grafana/runtime';
+import { mockComboboxRect } from '@grafana/test-utils';
 import server, { setupMockServer } from '@grafana/test-utils/server';
-import { getFolderFixtures } from '@grafana/test-utils/unstable';
+import { getFolderFixtures, setTestFlags } from '@grafana/test-utils/unstable';
 import { backendSrv } from 'app/core/services/backend_srv';
 import { contextSrv } from 'app/core/services/context_srv';
 
@@ -18,6 +21,8 @@ setBackendSrv(backendSrv);
 setupMockServer();
 
 const [_, { dashbdD, folderA, folderA_folderA }] = getFolderFixtures();
+
+mockComboboxRect();
 
 jest.mock('react-virtualized-auto-sizer', () => {
   return {
@@ -42,18 +47,25 @@ jest.mock('react-router-dom-v5-compat', () => ({
   useParams: jest.fn().mockReturnValue({}),
 }));
 
-jest.mock('@grafana/runtime', () => {
-  return {
-    ...jest.requireActual('@grafana/runtime'),
-    getDataSourceSrv: () => ({
-      getList: jest
-        .fn()
-        .mockReturnValue([
-          { name: 'Test Data Source', uid: 'test-data-source-uid', type: 'grafana-testdata-datasource' },
-        ]),
-    }),
-  };
-});
+const defaultTestDataSource = {
+  name: 'Test Data Source',
+  uid: 'test-data-source-uid',
+  type: 'grafana-testdata-datasource',
+} as DataSourceInstanceListItem;
+
+jest.mock('@grafana/runtime/unstable', () => ({
+  ...jest.requireActual('@grafana/runtime/unstable'),
+  useDataSourceInstanceList: jest.fn(() => ({ isLoading: false, items: [defaultTestDataSource] })),
+}));
+
+jest.mock('@grafana/assistant', () => ({
+  useAssistant: jest.fn(() => ({
+    isAvailable: true,
+    openAssistant: jest.fn(),
+  })),
+  createAssistantContextItem: jest.fn((type: string, data: object) => ({ type, ...data })),
+  isAssistantAvailable: jest.fn(() => of(true)),
+}));
 
 function render(ui: Parameters<typeof testRender>[0], options: Parameters<typeof testRender>[1] = {}) {
   return testRender(ui, {
@@ -107,10 +119,15 @@ describe('browse-dashboards BrowseDashboardsPage', () => {
       render(<BrowseDashboardsPage queryParams={{}} />);
       expect(await screen.findByPlaceholderText('Search for dashboards and folders')).toBeInTheDocument();
     });
-
     it('shows the "New" button', async () => {
       render(<BrowseDashboardsPage queryParams={{}} />);
       expect(await screen.findByRole('button', { name: 'New' })).toBeInTheDocument();
+    });
+
+    it('shows the "Recently deleted" button', async () => {
+      render(<BrowseDashboardsPage queryParams={{}} />);
+      await screen.findByPlaceholderText('Search for dashboards and folders');
+      expect(await screen.findByRole('link', { name: 'Recently deleted' })).toBeInTheDocument();
     });
 
     it('does not show the "New" button if the user does not have permissions', async () => {
@@ -189,6 +206,50 @@ describe('browse-dashboards BrowseDashboardsPage', () => {
       expect(screen.queryByRole('button', { name: 'Move' })).not.toBeInTheDocument();
       expect(screen.queryByRole('button', { name: 'Delete' })).not.toBeInTheDocument();
     });
+
+    describe('folder owner', () => {
+      testWithFeatureToggles({ enable: ['foldersAppPlatformAPI'] });
+      beforeEach(() => {
+        jest.spyOn(contextSrv, 'hasRole').mockReturnValue(true);
+      });
+
+      it('allows choosing a team to own the folder', async () => {
+        (useParams as jest.Mock).mockReturnValue({ uid: folderA_folderA.item.uid });
+        const { user } = render(<BrowseDashboardsPage queryParams={{}} />);
+
+        await user.click(await screen.findByRole('button', { name: 'Folder actions' }));
+        await user.click(await screen.findByRole('menuitem', { name: 'Manage folder owner' }));
+
+        expect(await screen.findByRole('dialog', { name: 'Manage folder owner' })).toBeInTheDocument();
+
+        await user.click(screen.getByRole('combobox', { name: /team/i }));
+        await user.click(await screen.findByText(/test team/i));
+
+        await user.click(screen.getByRole('button', { name: 'Save owner' }));
+        await waitFor(() => {
+          expect(screen.queryByRole('dialog', { name: 'Manage folder owner' })).not.toBeInTheDocument();
+        });
+      });
+
+      it('allows removing the team that owns the folder', async () => {
+        (useParams as jest.Mock).mockReturnValue({ uid: folderA.item.uid });
+        const { user } = render(<BrowseDashboardsPage queryParams={{}} />);
+
+        await screen.findByText(/owned by/i);
+
+        await user.click(await screen.findByRole('button', { name: 'Folder actions' }));
+        await user.click(await screen.findByRole('menuitem', { name: 'Manage folder owner' }));
+
+        expect(await screen.findByRole('dialog', { name: 'Manage folder owner' })).toBeInTheDocument();
+
+        await user.click(await screen.findByTitle(/clear value/i));
+
+        await user.click(screen.getByRole('button', { name: 'Save owner' }));
+        await waitFor(() => {
+          expect(screen.queryByRole('dialog', { name: 'Manage folder owner' })).not.toBeInTheDocument();
+        });
+      });
+    });
   });
 
   describe('for a child folder', () => {
@@ -251,11 +312,11 @@ describe('browse-dashboards BrowseDashboardsPage', () => {
       expect(await screen.findByRole('tab', { name: 'Dashboards' })).toBeInTheDocument();
       expect(await screen.findByRole('tab', { name: 'Dashboards' })).toHaveAttribute('aria-selected', 'true');
 
-      expect(await screen.findByRole('tab', { name: 'Panels' })).toBeInTheDocument();
-      expect(await screen.findByRole('tab', { name: 'Panels' })).toHaveAttribute('aria-selected', 'false');
+      expect(await screen.findByRole('tab', { name: /^Panels/ })).toBeInTheDocument();
+      expect(await screen.findByRole('tab', { name: /^Panels/ })).toHaveAttribute('aria-selected', 'false');
 
-      expect(await screen.findByRole('tab', { name: 'Alert rules' })).toBeInTheDocument();
-      expect(await screen.findByRole('tab', { name: 'Alert rules' })).toHaveAttribute('aria-selected', 'false');
+      expect(await screen.findByRole('tab', { name: /^Alert rules/ })).toBeInTheDocument();
+      expect(await screen.findByRole('tab', { name: /^Alert rules/ })).toHaveAttribute('aria-selected', 'false');
     });
 
     it('displays the filters and hides the actions initially', async () => {
@@ -340,6 +401,30 @@ describe('browse-dashboards BrowseDashboardsPage', () => {
 
       expect(checkbox).toBeInTheDocument();
     });
+
+    describe('with starred folders enabled', () => {
+      testWithFeatureToggles({ enable: ['starsFromAPIServer', 'foldersAppPlatformAPI'] });
+
+      beforeEach(() => {
+        setTestFlags({ 'grafana.starredFolders': true });
+      });
+
+      afterEach(async () => {
+        await act(async () => {
+          setTestFlags({});
+        });
+      });
+
+      it('shows the star toggle as the first action, before "Recently deleted"', async () => {
+        render(<BrowseDashboardsPage queryParams={{}} />);
+
+        const star = await screen.findByTestId(selectors.components.NavToolbar.markAsFavorite);
+        const recentlyDeleted = await screen.findByRole('link', { name: 'Recently deleted' });
+
+        // star precedes "Recently deleted" in document order, so it is the first action
+        expect(star.compareDocumentPosition(recentlyDeleted) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+      });
+    });
   });
 
   describe('Template dashboard modal', () => {
@@ -376,6 +461,7 @@ describe('browse-dashboards BrowseDashboardsPage', () => {
       render(<BrowseDashboardsPage queryParams={{}} />, {
         historyOptions: { initialEntries: [`/dashboards?templateDashboards=true`] },
       });
+      await screen.findByText('Sort');
       expect(screen.queryByRole('dialog', { name: 'Start a dashboard from a template' })).not.toBeInTheDocument();
     });
   });

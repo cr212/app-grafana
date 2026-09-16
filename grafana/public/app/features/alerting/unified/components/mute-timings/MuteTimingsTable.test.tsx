@@ -3,6 +3,7 @@ import { render, screen, userEvent, within } from 'test/test-utils';
 import { base64UrlEncode } from '@grafana/alerting';
 import { setupMswServer } from 'app/features/alerting/unified/mockApi';
 import {
+  setDeleteTimeIntervalError,
   setMuteTimingsListError,
   setTimeIntervalsListEmpty,
 } from 'app/features/alerting/unified/mocks/server/configure';
@@ -49,7 +50,7 @@ describe('MuteTimingsTable', () => {
       renderWithProvider();
       await user.click(await screen.findByRole('button', { name: /export all/i }));
 
-      expect(await screen.findByRole('dialog', { name: /drawer title export/i })).toBeInTheDocument();
+      expect(await screen.findByRole('dialog', { name: /export/i })).toBeInTheDocument();
     });
 
     it("shows individual 'export' drawer when allowed and supported, and can close", async () => {
@@ -58,11 +59,11 @@ describe('MuteTimingsTable', () => {
       const exportMuteTiming = await within(table).findAllByText(/export/i);
       await user.click(exportMuteTiming[0]);
 
-      expect(await screen.findByRole('dialog', { name: /drawer title export/i })).toBeInTheDocument();
+      expect(await screen.findByRole('dialog', { name: /export/i })).toBeInTheDocument();
 
       await user.click(screen.getByText(/cancel/i));
 
-      expect(screen.queryByRole('dialog', { name: /drawer title export/i })).not.toBeInTheDocument();
+      expect(screen.queryByRole('dialog', { name: /export/i })).not.toBeInTheDocument();
     });
 
     it('does not show export button when not supported', async () => {
@@ -120,6 +121,17 @@ describe('MuteTimingsTable', () => {
       );
 
       expect(deleteRequest).toBeDefined();
+    });
+
+    it('surfaces an error when deletion fails', async () => {
+      setDeleteTimeIntervalError();
+      const { user } = renderWithProvider();
+
+      await user.click((await screen.findAllByText(/delete/i))[0]);
+      await user.click(await screen.findByRole('button', { name: /delete/i }));
+
+      expect(await screen.findByRole('dialog', { name: /something went wrong/i })).toBeInTheDocument();
+      expect(screen.getByText(/still used by one or more notification policies or alert rules/i)).toBeInTheDocument();
     });
 
     it('shows empty state when no mute timings are configured', async () => {

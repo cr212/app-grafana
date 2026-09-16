@@ -1,8 +1,8 @@
-import { useState } from 'react';
+import { Fragment, useState } from 'react';
 
 import { selectors } from '@grafana/e2e-selectors';
 import { Trans, t } from '@grafana/i18n';
-import { Field, Combobox, Input, type ComboboxOption, Stack } from '@grafana/ui';
+import { Field, Combobox, Input, type ComboboxOption, Stack, FieldSet } from '@grafana/ui';
 
 import { VariableLegend } from './VariableLegend';
 
@@ -11,6 +11,7 @@ interface SwitchVariableFormProps {
   disabledValue: string;
   onEnabledValueChange: (value: string) => void;
   onDisabledValueChange: (value: string) => void;
+  inline?: boolean;
 }
 
 const VALUE_PAIR_OPTIONS: Array<ComboboxOption<string>> = [
@@ -25,6 +26,7 @@ export function SwitchVariableForm({
   disabledValue,
   onEnabledValueChange,
   onDisabledValueChange,
+  inline,
 }: SwitchVariableFormProps) {
   const currentValuePairType = getCurrentValuePairType(enabledValue, disabledValue);
   const [isCustomValuePairType, setIsCustomValuePairType] = useState(currentValuePairType === 'custom');
@@ -87,11 +89,16 @@ export function SwitchVariableForm({
     }
   };
 
+  const fieldWidth = inline ? undefined : 30;
+  const Wrapper = inline ? Fragment : FieldSet;
+
   return (
-    <>
-      <VariableLegend>
-        <Trans i18nKey="dashboard-scene.switch-variable-form.switch-options">Switch options</Trans>
-      </VariableLegend>
+    <Wrapper>
+      {!inline && (
+        <VariableLegend>
+          <Trans i18nKey="dashboard-scene.switch-variable-form.switch-options">Switch options</Trans>
+        </VariableLegend>
+      )}
 
       <Stack gap={2} direction="column">
         <Field
@@ -103,7 +110,7 @@ export function SwitchVariableForm({
           )}
         >
           <Combobox
-            width={40}
+            width={fieldWidth}
             value={isCustomValuePairType ? 'custom' : currentValuePairType}
             options={VALUE_PAIR_OPTIONS}
             onChange={onValuePairTypeChange}
@@ -125,7 +132,7 @@ export function SwitchVariableForm({
               invalid={enabledValueInvalid}
             >
               <Input
-                width={40}
+                width={fieldWidth}
                 defaultValue={enabledValue}
                 onChange={(event) => {
                   handleEnabledValueChange(event.currentTarget.value);
@@ -149,7 +156,7 @@ export function SwitchVariableForm({
               invalid={disabledValueInvalid}
             >
               <Input
-                width={40}
+                width={fieldWidth}
                 defaultValue={disabledValue}
                 onChange={(event) => handleDisabledValueChange(event.currentTarget.value)}
                 placeholder={t(
@@ -162,7 +169,7 @@ export function SwitchVariableForm({
           </Stack>
         )}
       </Stack>
-    </>
+    </Wrapper>
   );
 }
 

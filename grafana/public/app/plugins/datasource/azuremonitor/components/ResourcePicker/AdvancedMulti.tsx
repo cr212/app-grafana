@@ -4,10 +4,10 @@ import * as React from 'react';
 import { t } from '@grafana/i18n';
 import { Collapse, Space } from '@grafana/ui';
 
+import { type AzureMonitorResource } from '../../dataquery.gen';
 import { selectors } from '../../e2e/selectors';
-import { AzureMonitorResource } from '../../types/query';
 
-export interface ResourcePickerProps<T> {
+interface ResourcePickerProps<T> {
   resources: T[];
   onChange: (resources: T[]) => void;
   renderAdvanced: (resources: T[], onChange: (resources: T[]) => void) => React.ReactNode;

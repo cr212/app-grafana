@@ -1,5 +1,5 @@
 import { renderHook } from '@testing-library/react';
-import React from 'react';
+import React, { type JSX } from 'react';
 
 import { ExtensionRegistriesProvider } from '../ExtensionRegistriesContext';
 
@@ -7,7 +7,7 @@ import { AddedComponentsRegistry } from './AddedComponentsRegistry';
 import { AddedFunctionsRegistry } from './AddedFunctionsRegistry';
 import { AddedLinksRegistry } from './AddedLinksRegistry';
 import { ExposedComponentsRegistry } from './ExposedComponentsRegistry';
-import { PluginExtensionRegistries } from './types';
+import { type PluginExtensionRegistries } from './types';
 import {
   useAddedComponentsRegistrySlice,
   useAddedFunctionsRegistrySlice,
@@ -21,10 +21,10 @@ describe('useRegistrySlice', () => {
 
   beforeEach(() => {
     registries = {
-      addedComponentsRegistry: new AddedComponentsRegistry(),
-      exposedComponentsRegistry: new ExposedComponentsRegistry(),
-      addedLinksRegistry: new AddedLinksRegistry(),
-      addedFunctionsRegistry: new AddedFunctionsRegistry(),
+      addedComponentsRegistry: new AddedComponentsRegistry([]),
+      exposedComponentsRegistry: new ExposedComponentsRegistry([]),
+      addedLinksRegistry: new AddedLinksRegistry([]),
+      addedFunctionsRegistry: new AddedFunctionsRegistry([]),
     };
 
     wrapper = ({ children }: { children: React.ReactNode }) => (

@@ -38,6 +38,17 @@ const sendTestNotification = async (type: (typeof AppEvents)[keyof typeof AppEve
 };
 
 describe('AppNotificationList', () => {
+  it('should announce notifications to screen readers via live region', async () => {
+    renderWithContext();
+    await sendTestNotification(AppEvents.alertInfo, expectedInfoMessage);
+
+    // The list renders through a Portal (into the portal container, or document.body in tests),
+    // so query the document rather than the render container.
+    const liveRegion = document.body.querySelector('[aria-live="polite"]');
+    expect(liveRegion).toBeInTheDocument();
+    expect(liveRegion).toHaveAttribute('aria-label', expect.stringContaining(expectedInfoMessage));
+  });
+
   describe('Error notifications', () => {
     it('should show error notifications when not in kiosk mode', async () => {
       renderWithContext(undefined, '/d/test-dashboard');
@@ -95,6 +106,49 @@ describe('AppNotificationList', () => {
       await sendTestNotification(AppEvents.alertInfo, expectedInfoMessage);
 
       expect(await screen.findByText(expectedInfoMessage)).toBeInTheDocument();
+    });
+  });
+
+  describe('Event listener cleanup', () => {
+    let onSpy: jest.SpyInstance;
+    let offSpy: jest.SpyInstance;
+
+    const eventTypes = [AppEvents.alertWarning, AppEvents.alertSuccess, AppEvents.alertError, AppEvents.alertInfo];
+
+    beforeEach(() => {
+      onSpy = jest.spyOn(appEvents, 'on');
+      offSpy = jest.spyOn(appEvents, 'off');
+    });
+
+    afterEach(() => {
+      onSpy.mockRestore();
+      offSpy.mockRestore();
+    });
+
+    it('should register event listeners on mount', () => {
+      renderWithContext();
+
+      expect(onSpy).toHaveBeenCalledTimes(4);
+      eventTypes.forEach((eventType) => {
+        expect(onSpy).toHaveBeenCalledWith(eventType, expect.any(Function));
+      });
+    });
+
+    it('should unregister event listeners on unmount', () => {
+      const { unmount } = renderWithContext();
+
+      const handlers = eventTypes.map((eventType) => {
+        const handler = onSpy.mock.calls.find((call) => call[0] === eventType)?.[1];
+        expect(handler).toBeDefined();
+        return { eventType, handler };
+      });
+
+      unmount();
+
+      expect(offSpy).toHaveBeenCalledTimes(4);
+      handlers.forEach(({ eventType, handler }) => {
+        expect(offSpy).toHaveBeenCalledWith(eventType, handler);
+      });
     });
   });
 

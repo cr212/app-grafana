@@ -1,15 +1,15 @@
 import { useState } from 'react';
 
 import { t, Trans } from '@grafana/i18n';
-import { Alert, Box, EmptyState, FilterInput, Icon, Stack, TextLink } from '@grafana/ui';
-import { Repository } from 'app/api/clients/provisioning/v0alpha1';
+import { Alert, Box, EmptyState, FilterInput, Icon, Stack } from '@grafana/ui';
+import { type Repository, useGetFrontendSettingsQuery } from 'app/api/clients/provisioning/v0alpha1';
 
-import { RepositoryCard } from '../Repository/RepositoryCard';
+import { RepositoryListItem } from '../Repository/RepositoryListItem';
 import { useResourceStats } from '../Wizard/hooks/useResourceStats';
-import { UPGRADE_URL } from '../constants';
 import { useIsProvisionedInstance } from '../hooks/useIsProvisionedInstance';
 import { checkSyncSettings } from '../utils/checkSyncSettings';
-import { isFreeTierLicense } from '../utils/isFreeTierLicense';
+
+import { QuotaLimitMessage } from './QuotaLimitMessage';
 
 interface Props {
   items: Repository[];
@@ -18,10 +18,23 @@ interface Props {
 export function RepositoryList({ items }: Props) {
   const [query, setQuery] = useState('');
   const isProvisionedInstance = useIsProvisionedInstance();
-  const { resourceCount, managedCount, unmanagedCount } = useResourceStats(items[0].metadata?.name);
-
+  const { resourceCount, managedCount, unmanagedCount } = useResourceStats(items[0]?.metadata?.name);
+  const { data: frontendSettings } = useGetFrontendSettingsQuery();
+  const maxRepositories = frontendSettings?.maxRepositories;
+  const maxResourcesPerRepository = items[0]?.status?.quota?.maxResourcesPerRepository;
+  const isRepoLimitHit = !!maxRepositories && items.length >= maxRepositories;
   const filteredItems = items.filter((item) => item.metadata?.name?.includes(query));
+  const isEmpty = items.length === 0;
+  if (isEmpty) {
+    return (
+      <EmptyState
+        variant="not-found"
+        message={t('provisioning.repository-list.no-repositories', 'No repositories configured')}
+      />
+    );
+  }
   const { instanceConnected } = checkSyncSettings(items);
+  const hasInstanceSyncRepo = items.some((item) => item.spec?.sync?.target === 'instance');
 
   const getResourceCountSection = () => {
     if (isProvisionedInstance) {
@@ -29,7 +42,14 @@ export function RepositoryList({ items }: Props) {
         <Box marginBottom={2}>
           <Stack alignItems="center">
             <Icon name="check" color="green" />
-            <Trans i18nKey="provisioning.folder-repository-list.all-resources-managed" count={resourceCount}>
+            <Trans
+              i18nKey="provisioning.folder-repository-list.all-resources-managed"
+              count={resourceCount}
+              tOptions={{
+                defaultValue_one: 'All {{count}} resources are managed',
+                defaultValue_other: 'All {{count}} resources are managed',
+              }}
+            >
               All {{ count: resourceCount }} resources are managed
             </Trans>
           </Stack>
@@ -50,21 +70,25 @@ export function RepositoryList({ items }: Props) {
             {unmanagedCount > 0 && (
               <>
                 {' '}
-                <Trans i18nKey="provisioning.folder-repository-list.unmanaged-resources" count={unmanagedCount}>
+                <Trans
+                  i18nKey="provisioning.folder-repository-list.unmanaged-resources"
+                  count={unmanagedCount}
+                  tOptions={{
+                    defaultValue_one: "{{count}} resources aren't managed by Git sync.",
+                    defaultValue_other: "{{count}} resources aren't managed by Git sync.",
+                  }}
+                >
                   {{ count: unmanagedCount }} resources aren&apos;t managed by Git sync.
                 </Trans>
               </>
             )}
-            {isFreeTierLicense() && (
+            {isRepoLimitHit && (
               <>
-                <br />
-                <Trans i18nKey="provisioning.free-tier-limit.message-connection">
-                  Free-tier accounts are limited to 20 resources per folder. To add more resources per folder,
-                </Trans>{' '}
-                <TextLink href={UPGRADE_URL} external>
-                  <Trans i18nKey="provisioning.free-tier-limit.upgrade-link">upgrade your account</Trans>{' '}
-                </TextLink>
-                .
+                {' '}
+                <QuotaLimitMessage
+                  maxRepositories={maxRepositories}
+                  maxResourcesPerRepository={maxResourcesPerRepository}
+                />
               </>
             )}
           </Alert>
@@ -77,6 +101,17 @@ export function RepositoryList({ items }: Props) {
   return (
     <>
       {getResourceCountSection()}
+      {hasInstanceSyncRepo && (
+        <Alert
+          title={t('provisioning.instance-sync-deprecation.title', 'Instance sync is not fully supported')}
+          severity="warning"
+        >
+          <Trans i18nKey="provisioning.instance-sync-deprecation.message">
+            Instance sync is currently not fully supported and breaks library panels and alerts. To use library panels
+            and alerts, disconnect your repository and reconnect it using folder sync instead.
+          </Trans>
+        </Alert>
+      )}
       <Stack direction={'column'} gap={3}>
         {!instanceConnected && (
           <Stack gap={2}>
@@ -89,7 +124,7 @@ export function RepositoryList({ items }: Props) {
         )}
         <Stack direction={'column'} gap={2}>
           {filteredItems.length ? (
-            filteredItems.map((item) => <RepositoryCard key={item.metadata?.name} repository={item} />)
+            filteredItems.map((item) => <RepositoryListItem key={item.metadata?.name} repository={item} />)
           ) : (
             <EmptyState
               variant="not-found"

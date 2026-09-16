@@ -25,7 +25,7 @@
             "small": "img/testdata.svg",
             "large": "img/testdata.svg"
         },
-        "version": "12.4.0-pre",
+        "version": "13.2.2",
         "links": [
             {
                 "name": "Raise issue",
@@ -45,7 +45,8 @@
         }
     ],
     "dependencies": {
-        "grafanaDependency": ">=10.3.0-0"
+        "grafanaDependency": ">=12.3.0",
+        "plugins": []
     },
     "buildMode": "production"
 }

@@ -1,52 +1,55 @@
-import { MetricFindValue, TypedVariableModel } from '@grafana/data';
+import { type MetricFindValue, type TypedVariableModel, type AnnotationQuery } from '@grafana/data';
 import { config } from '@grafana/runtime';
 import {
-  AnnotationQuery,
-  DataQuery,
-  DataSourceRef,
-  Panel,
-  RowPanel,
-  VariableModel,
-  VariableType,
-  FieldConfigSource as FieldConfigSourceV1,
+  type DataQuery,
+  type DataSourceRef,
+  type Panel,
+  type RowPanel,
+  type VariableModel,
+  type VariableType,
+  type FieldConfigSource as FieldConfigSourceV1,
   FieldColorModeId as FieldColorModeIdV1,
   ThresholdsMode as ThresholdsModeV1,
   MappingType as MappingTypeV1,
   SpecialValueMatch as SpecialValueMatchV1,
 } from '@grafana/schema';
 import {
-  AnnotationQueryKind,
-  Spec as DashboardV2Spec,
-  DataLink,
-  DatasourceVariableKind,
+  type AnnotationQueryKind,
+  type Spec as DashboardV2Spec,
+  type DataLink,
+  type DatasourceVariableKind,
   defaultSpec as defaultDashboardV2Spec,
   defaultTimeSettingsSpec,
-  PanelQueryKind,
-  QueryVariableKind,
-  TransformationKind,
-  FieldColorModeId,
-  FieldConfigSource,
-  ThresholdsMode,
-  SpecialValueMatch,
-  AdhocVariableKind,
-  CustomVariableKind,
-  ConstantVariableKind,
-  IntervalVariableKind,
-  TextVariableKind,
-  GroupByVariableKind,
-  LibraryPanelKind,
-  PanelKind,
-  GridLayoutItemKind,
+  type PanelQueryKind,
+  type QueryVariableKind,
+  type TransformationKind,
+  type FieldColorModeId,
+  type FieldConfigSource,
+  type ThresholdsMode,
+  type SpecialValueMatch,
+  type AdhocVariableKind,
+  type CustomVariableKind,
+  type ConstantVariableKind,
+  type IntervalVariableKind,
+  type TextVariableKind,
+  type GroupByVariableKind,
+  type SwitchVariableKind,
+  type LibraryPanelKind,
+  type PanelKind,
+  type GridLayoutItemKind,
   defaultDataQueryKind,
-  RowsLayoutRowKind,
-  GridLayoutKind,
+  type RowsLayoutRowKind,
+  type GridLayoutKind,
   defaultDashboardLinkType,
   defaultDashboardLink,
   defaultFieldConfigSource,
   defaultPanelQueryKind,
-} from '@grafana/schema/dist/esm/schema/dashboard/v2';
-import { DashboardLink, DataTransformerConfig } from '@grafana/schema/src/raw/dashboard/x/dashboard_types.gen';
-import { isWeekStart, WeekStart } from '@grafana/ui';
+} from '@grafana/schema/apis/dashboard.grafana.app/v2';
+import {
+  type DashboardLink,
+  type DataTransformerConfig,
+} from '@grafana/schema/dist/esm/raw/dashboard/x/Dashboard_types.gen';
+import { isWeekStart, type WeekStart } from '@grafana/ui';
 import {
   AnnoKeyCreatedBy,
   AnnoKeyDashboardGnetId,
@@ -57,12 +60,13 @@ import {
   AnnoKeyUpdatedBy,
   AnnoKeyUpdatedTimestamp,
   DeprecatedInternalId,
-  ObjectMeta,
+  type ObjectMeta,
 } from 'app/features/apiserver/types';
+import { convertRowsToGridPanels, type LegacyRow } from 'app/features/dashboard/state/convertRowsToGridPanels';
 import { transformV2ToV1AnnotationQuery } from 'app/features/dashboard-scene/serialization/annotations';
 import { GRID_ROW_HEIGHT } from 'app/features/dashboard-scene/serialization/const';
 import { validateFiltersOrigin } from 'app/features/dashboard-scene/serialization/sceneVariablesSetToVariables';
-import { TypedVariableModelV2 } from 'app/features/dashboard-scene/serialization/transformSaveModelSchemaV2ToScene';
+import { type TypedVariableModelV2 } from 'app/features/dashboard-scene/serialization/transformSaveModelSchemaV2ToScene';
 import { getDefaultDataSourceRef } from 'app/features/dashboard-scene/serialization/transformSceneToSaveModelSchemaV2';
 import {
   transformCursorSyncV2ToV1,
@@ -78,9 +82,9 @@ import {
   transformVariableHideToEnum,
   transformVariableRefreshToEnum,
 } from 'app/features/dashboard-scene/serialization/transformToV2TypesUtils';
-import { DashboardDataDTO, DashboardDTO } from 'app/types/dashboard';
+import { type DashboardDataDTO, type DashboardDTO } from 'app/types/dashboard';
 
-import { DashboardWithAccessInfo } from './types';
+import { type DashboardWithAccessInfo } from './types';
 import { isDashboardResource, isDashboardV0Spec, isDashboardV2Resource, isDashboardV2Spec } from './utils';
 
 export function ensureV2Response(
@@ -104,10 +108,10 @@ export function ensureV2Response(
 
   if (isDashboardResource(dto)) {
     accessMeta = dto.access;
-    annotationsMeta = {
-      ...dto.metadata.annotations,
-      [AnnoKeyDashboardGnetId]: dashboard.gnetId ?? undefined,
-    };
+    annotationsMeta = { ...dto.metadata.annotations };
+    if (dashboard.gnetId) {
+      annotationsMeta[AnnoKeyDashboardGnetId] = `${dashboard.gnetId}`;
+    }
     creationTimestamp = dto.metadata.creationTimestamp;
     labelsMeta = {
       [DeprecatedInternalId]: dto.metadata.labels?.[DeprecatedInternalId],
@@ -132,7 +136,7 @@ export function ensureV2Response(
       [AnnoKeySlug]: dto.meta.slug,
     };
     if (dashboard.gnetId) {
-      annotationsMeta[AnnoKeyDashboardGnetId] = dashboard.gnetId;
+      annotationsMeta[AnnoKeyDashboardGnetId] = `${dashboard.gnetId}`;
     }
     if (dto.meta.isSnapshot) {
       // FIXME -- lets not put non-annotation data in annotations!
@@ -162,7 +166,7 @@ export function ensureV2Response(
       // sometimes we can have a v2 spec returned through legacy api like public dashboard
       // in that case we need to return dashboard as it is, since the conversion is not needed
       return {
-        apiVersion: 'v2beta1',
+        apiVersion: 'v2',
         kind: 'DashboardWithAccessInfo',
         metadata,
         spec: dto.dashboard,
@@ -173,7 +177,8 @@ export function ensureV2Response(
 
   const timeSettingsDefaults = defaultTimeSettingsSpec();
   const dashboardDefaults = defaultDashboardV2Spec();
-  const [elements, layout] = getElementsFromPanels(dashboard.panels || []);
+
+  const [elements, layout] = getElementsFromPanels(getPanels(dashboard));
   // @ts-expect-error - dashboard.templating.list is VariableModel[] and we need TypedVariableModel[] here
   // that would allow accessing unique properties for each variable type that the API returns
   const variables = getVariables(dashboard.templating?.list || []);
@@ -215,6 +220,7 @@ export function ensureV2Response(
       keepTime: link.keepTime ?? defaultDashboardLink().keepTime,
       includeVars: link.includeVars ?? defaultDashboardLink().includeVars,
       targetBlank: link.targetBlank ?? defaultDashboardLink().targetBlank,
+      ...(link.placement !== undefined && { placement: link.placement }),
     })),
     annotations,
     variables,
@@ -223,7 +229,7 @@ export function ensureV2Response(
   };
 
   return {
-    apiVersion: 'v2beta1',
+    apiVersion: 'v2',
     kind: 'DashboardWithAccessInfo',
     metadata,
     spec,
@@ -313,6 +319,19 @@ function getElementsFromPanels(
   }
 
   return [elements, layout];
+}
+
+/**
+ * Dashboards stored on the backend are migrated to the latest schema version before they reach us,
+ * but client side ones (scripted dashboards) are not. Pre-schema-version-16 dashboards keep their
+ * panels inside `rows`, so run the same rows to grid conversion the v16 migration does.
+ */
+function getPanels(dashboard: DashboardDataDTO & { rows?: LegacyRow[] }): Array<Panel | RowPanel> {
+  if (dashboard.panels) {
+    return dashboard.panels;
+  }
+
+  return dashboard.rows ? convertRowsToGridPanels(dashboard.rows) : [];
 }
 
 function convertToRowsLayout(
@@ -498,7 +517,11 @@ export function getDefaultDatasource(): DataSourceRef {
 export function getPanelQueries(targets: DataQuery[], panelDatasource: DataSourceRef): PanelQueryKind[] | undefined {
   return targets.map((t) => {
     const { refId, hide, datasource, ...query } = t;
-    const ds = t.datasource || panelDatasource;
+    // Check if target datasource is empty object {} (no keys), treat it as missing
+    // and fall through to use panel datasource (matches backend behavior)
+    const targetDs = t.datasource;
+    const isEmptyDatasourceObject = targetDs && typeof targetDs === 'object' && Object.keys(targetDs).length === 0;
+    const ds = isEmptyDatasourceObject ? panelDatasource : targetDs || panelDatasource;
     const q: PanelQueryKind = {
       kind: 'PanelQuery',
       spec: {
@@ -523,8 +546,59 @@ export function getPanelQueries(targets: DataQuery[], panelDatasource: DataSourc
   });
 }
 
+/**
+ * Known Panel properties from the Panel schema (dashboard_kind.cue).
+ * These should NOT be passed to Angular migration handlers.
+ * Only "unknown" Angular-specific properties should be passed.
+ */
+const knownPanelProperties = new Set([
+  'type',
+  'id',
+  'pluginVersion',
+  'targets',
+  'title',
+  'description',
+  'transparent',
+  'datasource',
+  'gridPos',
+  'links',
+  'repeat',
+  'repeatDirection',
+  'maxPerRow',
+  'maxDataPoints',
+  'transformations',
+  'interval',
+  'timeFrom',
+  'timeShift',
+  'hideTimeOverride',
+  'timeCompare',
+  'libraryPanel',
+  'cacheTimeout',
+  'queryCachingTTL',
+  'options',
+  'fieldConfig',
+  'autoMigrateFrom',
+]);
+
+/**
+ * Extracts only the Angular-specific options from a panel,
+ * filtering out all known Panel schema properties.
+ * This is used to pass just the Angular options to migration handlers
+ * (e.g., sparkline, valueName, format for singlestat).
+ */
+function extractAngularOptions(panel: Panel): Record<string, unknown> {
+  const result: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(panel)) {
+    if (!knownPanelProperties.has(key)) {
+      result[key] = value;
+    }
+  }
+  return result;
+}
+
 export function buildPanelKind(p: Panel): PanelKind {
-  const queries = getPanelQueries((p.targets as unknown as DataQuery[]) || [], p.datasource ?? { type: '', uid: '' });
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/consistent-type-assertions
+  const queries = getPanelQueries((p.targets as any) || [], p.datasource ?? { type: '', uid: '' });
 
   const transformations = getPanelTransformations(p.transformations || []);
 
@@ -540,12 +614,40 @@ export function buildPanelKind(p: Panel): PanelKind {
   }
 
   // match backend conversion behavior
+  // Only set first threshold step value to null if it's explicitly null or undefined
+  // Preserve 0 values (0 is falsy but should be kept as 0, not converted to null)
   if (
     fieldConfig.defaults.thresholds?.steps &&
     fieldConfig.defaults.thresholds.steps.length > 0 &&
-    !fieldConfig.defaults.thresholds.steps[0]?.value
+    (fieldConfig.defaults.thresholds.steps[0]?.value === null ||
+      fieldConfig.defaults.thresholds.steps[0]?.value === undefined)
   ) {
     fieldConfig.defaults.thresholds.steps[0]!.value = null;
+  }
+
+  // Build options with Angular migration data if needed (matches backend behavior)
+  // autoMigrateFrom is set during v0->v1 migration when Angular panels are converted
+  let { autoMigrateFrom } = p;
+  let options = p.options ?? {};
+  const originalOptions = extractAngularOptions(p);
+
+  // When autoMigrateFrom is present OR when there are Angular-specific properties at root level,
+  // compose __angularMigration with only Angular-specific options.
+  // This filters out known Panel schema properties, passing only the Angular options to migration handlers.
+  // The second condition handles panels like "text" that have Angular-style properties (content, mode)
+  // but don't have autoMigrateFrom set because they don't need a type conversion.
+  if (!autoMigrateFrom && Object.keys(originalOptions).length > 0) {
+    autoMigrateFrom = p.type;
+  }
+
+  if (autoMigrateFrom) {
+    options = {
+      ...options,
+      __angularMigration: {
+        autoMigrateFrom,
+        originalOptions,
+      },
+    };
   }
 
   const panelKind: PanelKind = {
@@ -560,7 +662,7 @@ export function buildPanelKind(p: Panel): PanelKind {
         version: p.pluginVersion ?? '',
         spec: {
           fieldConfig: p.fieldConfig || defaultFieldConfigSource(),
-          options: p.options ?? {},
+          options,
         },
       },
       links:
@@ -583,6 +685,7 @@ export function buildPanelKind(p: Panel): PanelKind {
             ...(p.queryCachingTTL !== undefined && { queryCachingTTL: p.queryCachingTTL }),
             ...(p.timeFrom !== undefined && { timeFrom: p.timeFrom }),
             ...(p.timeShift !== undefined && { timeShift: p.timeShift }),
+            ...(p.timeCompare !== undefined && { timeCompare: p.timeCompare }),
           },
         },
       },
@@ -594,10 +697,13 @@ export function buildPanelKind(p: Panel): PanelKind {
 function getPanelTransformations(transformations: DataTransformerConfig[]): TransformationKind[] {
   return transformations.map((t) => {
     return {
-      kind: t.id,
+      kind: 'Transformation' as const,
+      group: t.id,
       spec: {
-        ...t,
+        disabled: t.disabled,
+        filter: t.filter,
         ...(t.topic !== undefined && { topic: transformDataTopic(t.topic) }),
+        options: t.options,
       },
     };
   });
@@ -645,6 +751,7 @@ function getVariables(vars: TypedVariableModel[]): DashboardV2Spec['variables'] 
             ...(v.definition && { definition: v.definition }),
             refresh: transformVariableRefreshToEnum(v.refresh),
             regex: v.regex ?? '',
+            ...(v.regexApplyTo && { regexApplyTo: v.regexApplyTo }),
             sort: v.sort ? transformSortVariableToEnum(v.sort) : 'disabled',
             query: {
               kind: 'DataQuery',
@@ -809,6 +916,29 @@ function getVariables(vars: TypedVariableModel[]): DashboardV2Spec['variables'] 
 
         variables.push(gb);
         break;
+      case 'switch':
+        // V1 switch variables have options array with exactly 2 options
+        // First option is typically enabledValue, second is disabledValue
+        const options = v.options ?? [];
+        const enabledValueRaw = options[0]?.value ?? 'true';
+        const disabledValueRaw = options[1]?.value ?? 'false';
+        const enabledValue = Array.isArray(enabledValueRaw) ? enabledValueRaw[0] : enabledValueRaw;
+        const disabledValue = Array.isArray(disabledValueRaw) ? disabledValueRaw[0] : disabledValueRaw;
+        // Current value should be a string (not array)
+        const currentValueRaw = v.current?.value ?? disabledValue;
+        const currentValue = Array.isArray(currentValueRaw) ? currentValueRaw[0] : currentValueRaw;
+
+        const sw: SwitchVariableKind = {
+          kind: 'SwitchVariable',
+          spec: {
+            ...commonProperties,
+            current: currentValue,
+            enabledValue,
+            disabledValue,
+          },
+        };
+        variables.push(sw);
+        break;
       default:
         // do not throw error, just log it
         console.error(`Variable transformation not implemented: ${v.type}`);
@@ -820,7 +950,7 @@ function getVariables(vars: TypedVariableModel[]): DashboardV2Spec['variables'] 
 function getAnnotations(annotations: AnnotationQuery[]): DashboardV2Spec['annotations'] {
   return annotations.map((a) => {
     // Extract properties that are explicitly handled
-    const { name, enable, hide, iconColor, builtIn, datasource, target, filter, ...legacyOptions } = a;
+    const { name, enable, hide, iconColor, builtIn, datasource, target, filter, mappings, ...legacyOptions } = a;
 
     const aq: AnnotationQueryKind = {
       kind: 'AnnotationQuery',
@@ -830,6 +960,7 @@ function getAnnotations(annotations: AnnotationQuery[]): DashboardV2Spec['annota
         hide: Boolean(hide),
         iconColor: iconColor,
         builtIn: Boolean(builtIn),
+        ...(mappings && { mappings: transformAnnotationMappingsV1ToV2(mappings) }),
         query: {
           kind: 'DataQuery',
           version: defaultDataQueryKind().version,
@@ -880,12 +1011,13 @@ function getVariablesV1(vars: DashboardV2Spec['variables']): VariableModel[] {
               ? v.spec.query.spec[LEGACY_STRING_VALUE_KEY]
               : v.spec.query.spec,
           datasource: {
-            type: v.spec.query?.spec.group,
-            uid: v.spec.query?.spec.datasource?.name,
+            type: v.spec.query?.group,
+            uid: v.spec.query?.datasource?.name,
           },
           sort: transformSortVariableToEnumV1(v.spec.sort),
           refresh: transformVariableRefreshToEnumV1(v.spec.refresh),
           regex: v.spec.regex,
+          regexApplyTo: v.spec.regexApplyTo,
           allValue: v.spec.allValue,
           includeAll: v.spec.includeAll,
           multi: v.spec.multi,
@@ -997,6 +1129,29 @@ function getVariablesV1(vars: DashboardV2Spec['variables']): VariableModel[] {
         };
         variables.push(av);
         break;
+      case 'SwitchVariable':
+        const sv: VariableModel = {
+          ...commonProperties,
+          current: {
+            text: v.spec.current,
+            value: v.spec.current,
+          },
+          options: [
+            {
+              text: v.spec.enabledValue,
+              value: v.spec.enabledValue,
+              selected: v.spec.current === v.spec.enabledValue,
+            },
+            {
+              text: v.spec.disabledValue,
+              value: v.spec.disabledValue,
+              selected: v.spec.current === v.spec.disabledValue,
+            },
+          ],
+          query: '',
+        };
+        variables.push(sv);
+        break;
       default:
         // do not throw error, just log it
         console.error(`Variable transformation not implemented: ${v}`);
@@ -1066,13 +1221,16 @@ function transformV2PanelToV1Panel(
           refId: q.spec.refId,
           hide: q.spec.hidden,
           datasource: {
-            uid: q.spec.query.spec.datasource?.uid,
-            type: q.spec.query.spec.group,
+            uid: q.spec.query.datasource?.name,
+            type: q.spec.query.group,
           },
           ...q.spec.query.spec,
         };
       }),
-      transformations: panel.data.spec.transformations.map((t) => t.spec),
+      transformations: panel.data.spec.transformations.map((t) => ({
+        id: t.group,
+        ...t.spec,
+      })),
       gridPos,
       ...(panel.data.spec.queryOptions.cacheTimeout !== undefined && {
         cacheTimeout: panel.data.spec.queryOptions.cacheTimeout,
@@ -1090,6 +1248,9 @@ function transformV2PanelToV1Panel(
       ...(panel.data.spec.queryOptions.timeFrom !== undefined && { timeFrom: panel.data.spec.queryOptions.timeFrom }),
       ...(panel.data.spec.queryOptions.timeShift !== undefined && {
         timeShift: panel.data.spec.queryOptions.timeShift,
+      }),
+      ...(panel.data.spec.queryOptions.timeCompare !== undefined && {
+        timeCompare: panel.data.spec.queryOptions.timeCompare,
       }),
       ...(panel.transparent !== undefined && { transparent: panel.transparent }),
       ...(repeat?.value !== undefined && { repeat: repeat.value }),
@@ -1130,7 +1291,7 @@ export function transformMappingsToV1(fieldConfig: FieldConfigSource): FieldConf
   };
 
   if (fieldConfig.defaults.mappings && fieldConfig.defaults.mappings.length > 0) {
-    transformedDefaults.mappings = fieldConfig.defaults.mappings.map((mapping) => {
+    transformedDefaults.mappings = fieldConfig.defaults.mappings.flatMap((mapping) => {
       switch (mapping.type) {
         case 'value':
           return {
@@ -1147,15 +1308,20 @@ export function transformMappingsToV1(fieldConfig: FieldConfigSource): FieldConf
             ...mapping,
             type: MappingTypeV1.RegexToText,
           };
-        case 'special':
+        case 'special': {
+          const v1Match = transformSpecialValueMatchToV1(mapping.options.match);
+          if (v1Match === undefined) {
+            return [];
+          }
           return {
             ...mapping,
             options: {
               ...mapping.options,
-              match: transformSpecialValueMatchToV1(mapping.options.match),
+              match: v1Match,
             },
             type: MappingTypeV1.SpecialValue,
           };
+        }
         default:
           return mapping;
       }
@@ -1210,6 +1376,16 @@ function colorIdToEnumv1(colorId: FieldColorModeId): FieldColorModeIdV1 {
       return FieldColorModeIdV1.ContinuousGreens;
     case 'continuous-purples':
       return FieldColorModeIdV1.ContinuousPurples;
+    case 'continuous-viridis':
+      return FieldColorModeIdV1.ContinuousViridis;
+    case 'continuous-magma':
+      return FieldColorModeIdV1.ContinuousMagma;
+    case 'continuous-plasma':
+      return FieldColorModeIdV1.ContinuousPlasma;
+    case 'continuous-inferno':
+      return FieldColorModeIdV1.ContinuousInferno;
+    case 'continuous-cividis':
+      return FieldColorModeIdV1.ContinuousCividis;
     case 'fixed':
       return FieldColorModeIdV1.Fixed;
     case 'shades':
@@ -1219,7 +1395,7 @@ function colorIdToEnumv1(colorId: FieldColorModeId): FieldColorModeIdV1 {
   }
 }
 
-function transformSpecialValueMatchToV1(match: SpecialValueMatch): SpecialValueMatchV1 {
+function transformSpecialValueMatchToV1(match: SpecialValueMatch): SpecialValueMatchV1 | undefined {
   switch (match) {
     case 'true':
       return SpecialValueMatchV1.True;
@@ -1234,7 +1410,8 @@ function transformSpecialValueMatchToV1(match: SpecialValueMatch): SpecialValueM
     case 'empty':
       return SpecialValueMatchV1.Empty;
     default:
-      throw new Error(`Unknown match type: ${match}`);
+      console.warn(`Skipping special value mapping with unknown match type: "${match}"`);
+      return undefined;
   }
 }
 
@@ -1256,15 +1433,18 @@ function transformToV1VariableTypes(variable: TypedVariableModelV2): VariableTyp
       return 'groupby';
     case 'AdhocVariable':
       return 'adhoc';
+    case 'SwitchVariable':
+      return 'switch';
     default:
       throw new Error(`Unknown variable type: ${variable}`);
   }
 }
 
-export function transformDashboardV2SpecToV1(spec: DashboardV2Spec, metadata: ObjectMeta): DashboardDataDTO {
-  const annotations = spec.annotations.map(transformV2ToV1AnnotationQuery);
+function transformDashboardV2SpecToV1(spec: DashboardV2Spec, metadata: ObjectMeta): DashboardDataDTO {
+  const annotations = (spec.annotations ?? []).map(transformV2ToV1AnnotationQuery);
 
-  const variables = getVariablesV1(spec.variables);
+  const gnetId = metadata.annotations?.[AnnoKeyDashboardGnetId];
+  const variables = getVariablesV1(spec.variables ?? []);
   const panels = getPanelsV1(spec.elements, spec.layout);
   return {
     uid: metadata.name,
@@ -1276,7 +1456,7 @@ export function transformDashboardV2SpecToV1(spec: DashboardV2Spec, metadata: Ob
     preload: spec.preload,
     liveNow: spec.liveNow,
     editable: spec.editable,
-    gnetId: metadata.annotations?.[AnnoKeyDashboardGnetId],
+    gnetId: gnetId?.length ? +gnetId : undefined,
     revision: spec.revision,
     time: {
       from: spec.timeSettings.from,
@@ -1298,4 +1478,26 @@ export function transformDashboardV2SpecToV1(spec: DashboardV2Spec, metadata: Ob
     panels,
     templating: { list: variables },
   };
+}
+
+function transformAnnotationMappingsV1ToV2(
+  mappings: AnnotationQuery['mappings']
+): AnnotationQueryKind['spec']['mappings'] {
+  if (!mappings) {
+    return {};
+  }
+
+  return Object.fromEntries(
+    Object.entries(mappings).map(([key, value]) => {
+      if (typeof value === 'string') {
+        return [key, { source: 'field', value }];
+      }
+
+      if (typeof value === 'object') {
+        return [key, value.source ? value : { source: 'field', ...value }];
+      }
+
+      return [key, value];
+    })
+  );
 }
